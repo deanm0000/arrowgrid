@@ -3,11 +3,11 @@ export { ArqueroGrid } from "./ArqueroGrid";
 export { toGridCell, getCellKind } from "./convert/toGridCell";
 export { fromGridCell, parseValue } from "./convert/fromGridCell";
 
-export { useArqueroGrid, type UseArqueroGridProps } from "./react/useArqueroGrid";
-export { useColumnFilters, type UseColumnFiltersProps } from "./react/useColumnFilters";
+export { useArqueroGrid } from "./react/useArqueroGrid";
+export { useColumnFilters } from "./react/useColumnFilters";
 
-export { ColumnFilter, type ColumnFilterProps } from "./react/components/ColumnFilter";
-export { GroupHeader, type GroupHeaderProps } from "./react/components/GroupHeader";
+export { ColumnFilter } from "./react/components/ColumnFilter";
+export { GroupHeader } from "./react/components/GroupHeader";
 
 export type {
   SortSpec,
@@ -16,6 +16,9 @@ export type {
   CellChange,
   BulkChange,
   Change,
-  GridConfig,
   UseArqueroGridResult,
+  UseArqueroGridProps,
+  UseColumnFiltersProps,
+  ColumnFilterProps,
+  GroupHeaderProps,
 } from "./types";

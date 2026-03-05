@@ -1,25 +1,26 @@
 import { useState, useCallback } from "react";
-import type { FilterSpec } from "../types";
-
-export interface UseColumnFiltersProps {
-  initialFilters?: Map<string, FilterSpec>;
-  onFilterChange?: (filters: Map<string, FilterSpec>) => void;
-}
+import type { FilterSpec, UseColumnFiltersProps } from "../types";
 
 export function useColumnFilters(props?: UseColumnFiltersProps) {
-  const [filters, setFilters] = useState<Map<string, FilterSpec>>(
-    props?.initialFilters || new Map()
+  const [filters, setFilters] = useState<FilterSpec[]>(
+    props?.initialFilters || []
   );
 
-  const setFilter = useCallback(
-    (column: string, spec: FilterSpec | undefined) => {
+  const addFilter = useCallback(
+    (filter: FilterSpec) => {
       setFilters((prev) => {
-        const next = new Map(prev);
-        if (spec) {
-          next.set(column, spec);
-        } else {
-          next.delete(column);
-        }
+        const next = [...prev, filter];
+        props?.onFilterChange?.(next);
+        return next;
+      });
+    },
+    [props]
+  );
+
+  const removeFilter = useCallback(
+    (index: number) => {
+      setFilters((prev) => {
+        const next = prev.filter((_, i) => i !== index);
         props?.onFilterChange?.(next);
         return next;
       });
@@ -28,26 +29,14 @@ export function useColumnFilters(props?: UseColumnFiltersProps) {
   );
 
   const clearFilters = useCallback(() => {
-    setFilters(new Map());
-    props?.onFilterChange?.(new Map());
+    setFilters([]);
+    props?.onFilterChange?.([]);
   }, [props]);
-
-  const removeFilter = useCallback(
-    (column: string) => {
-      setFilters((prev) => {
-        const next = new Map(prev);
-        next.delete(column);
-        props?.onFilterChange?.(next);
-        return next;
-      });
-    },
-    [props]
-  );
 
   return {
     filters,
-    setFilter,
-    clearFilters,
+    addFilter,
     removeFilter,
+    clearFilters,
   };
 }

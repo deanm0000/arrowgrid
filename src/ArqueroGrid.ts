@@ -1,11 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { table, op, desc as aqDesc } from "arquero";
+import type { Table } from "arquero";
 import type { SortSpec, AggregateSpec, FilterSpec, CellChange } from "./types";
 
 interface GroupInfo {
   headerIndex: number;
   isCollapsed: boolean;
   key: string;
+  rowCount: number;
   subGroups: GroupInfo[] | undefined;
 }
 
@@ -19,6 +21,7 @@ type ArqueroTable = ReturnType<typeof table> & {
   numRows(): number;
   objects(): any[];
   object(row: number): any;
+  reify(): ArqueroTable;
 };
 
 export class ArqueroGrid {
@@ -28,20 +31,18 @@ export class ArqueroGrid {
   private redoStack: CellChange[];
   private _groupBy: string[];
   private _sortBy: SortSpec[];
-  private _filters: Map<string, FilterSpec>;
+  private _filters: FilterSpec[];
   private _aggregates: Record<string, AggregateSpec>;
   private _groupStates: Map<string, boolean>;
-  private columnNames: string[];
 
-  constructor(data: any[] = []) {
-    this._table = table(data) as ArqueroTable;
-    this.columnNames = this._table.columnNames();
+  constructor(data: Table) {
+    this._table = data as ArqueroTable;
     this.staged = new Map();
     this.undoStack = [];
     this.redoStack = [];
     this._groupBy = [];
     this._sortBy = [];
-    this._filters = new Map();
+    this._filters = [];
     this._aggregates = {};
     this._groupStates = new Map();
   }
@@ -58,8 +59,8 @@ export class ArqueroGrid {
     return [...this._sortBy];
   }
 
-  get filters(): Map<string, FilterSpec> {
-    return new Map(this._filters);
+  get filters(): FilterSpec[] {
+    return [...this._filters];
   }
 
   get aggregates(): Record<string, AggregateSpec> {
@@ -78,45 +79,112 @@ export class ArqueroGrid {
     return this.redoStack.length > 0;
   }
 
+  private applyEdits(inputTable: ArqueroTable): ArqueroTable {
+    if (this.staged.size === 0) return inputTable;
+
+    const edits: Record<string, Record<number, any>> = {};
+    
+    for (const [key, value] of this.staged) {
+      const [column, rowStr] = key.split(":");
+      const row = parseInt(rowStr, 10);
+      if (!edits[column]) {
+        edits[column] = {};
+      }
+      edits[column][row] = value;
+    }
+
+    const colUpdates: Record<string, any[]> = {};
+    const numRows = inputTable.numRows();
+
+    for (const [column, rowEdits] of Object.entries(edits)) {
+      const currentCol = inputTable.column(column) as any;
+      const newValues = [...currentCol];
+
+      for (const [rowStr, newValue] of Object.entries(rowEdits)) {
+        const row = parseInt(rowStr, 10);
+        if (!isNaN(row) && row >= 0 && row < newValues.length) {
+          newValues[row] = newValue;
+        }
+      }
+      colUpdates[column] = newValues;
+    }
+
+    return inputTable.derive(colUpdates) as ArqueroTable;
+  }
+
   private applyFilters(inputTable: ArqueroTable): ArqueroTable {
-    if (this._filters.size === 0) return inputTable;
+    if (this._filters.length === 0) return inputTable;
 
     const filterConditions: ((d: any) => boolean)[] = [];
 
-    for (const [column, spec] of this._filters) {
-      if (!spec) continue;
-
-      if (spec.type === "custom" && spec.predicate) {
-        filterConditions.push((d: any) => spec.predicate!(d[column]));
+    for (const filter of this._filters) {
+      if (filter.expr) {
+        filterConditions.push(filter.expr);
         continue;
       }
 
-      switch (spec.type) {
-        case "equals":
-          filterConditions.push((d: any) => d[column] === spec.value);
+      const { column, op: operator, value, otherColumn } = filter;
+      if (!column || !operator) continue;
+
+      switch (operator) {
+        case "==":
+          filterConditions.push((d: any) => d[column] === value);
+          break;
+        case "!=":
+          filterConditions.push((d: any) => d[column] !== value);
+          break;
+        case ">":
+          if (otherColumn) {
+            filterConditions.push((d: any) => d[column] > d[otherColumn]);
+          } else {
+            filterConditions.push((d: any) => d[column] > value);
+          }
+          break;
+        case "<":
+          if (otherColumn) {
+            filterConditions.push((d: any) => d[column] < d[otherColumn]);
+          } else {
+            filterConditions.push((d: any) => d[column] < value);
+          }
+          break;
+        case ">=":
+          if (otherColumn) {
+            filterConditions.push((d: any) => d[column] >= d[otherColumn]);
+          } else {
+            filterConditions.push((d: any) => d[column] >= value);
+          }
+          break;
+        case "<=":
+          if (otherColumn) {
+            filterConditions.push((d: any) => d[column] <= d[otherColumn]);
+          } else {
+            filterConditions.push((d: any) => d[column] <= value);
+          }
           break;
         case "contains":
-          if (typeof spec.value === "string") {
+          if (typeof value === "string") {
             filterConditions.push((d: any) =>
-              String(d[column] ?? "").toLowerCase().includes(spec.value!.toLowerCase())
+              String(d[column] ?? "").toLowerCase().includes(value.toLowerCase())
             );
           }
           break;
-        case "gt":
-          filterConditions.push((d: any) => d[column] > spec.value);
+        case "startsWith":
+          if (typeof value === "string") {
+            filterConditions.push((d: any) =>
+              String(d[column] ?? "").toLowerCase().startsWith(value.toLowerCase())
+            );
+          }
           break;
-        case "gte":
-          filterConditions.push((d: any) => d[column] >= spec.value);
-          break;
-        case "lt":
-          filterConditions.push((d: any) => d[column] < spec.value);
-          break;
-        case "lte":
-          filterConditions.push((d: any) => d[column] <= spec.value);
+        case "endsWith":
+          if (typeof value === "string") {
+            filterConditions.push((d: any) =>
+              String(d[column] ?? "").toLowerCase().endsWith(value.toLowerCase())
+            );
+          }
           break;
         case "in":
-          if (spec.values && Array.isArray(spec.values)) {
-            filterConditions.push((d: any) => spec.values!.includes(d[column]));
+          if (Array.isArray(value)) {
+            filterConditions.push((d: any) => value.includes(d[column]));
           }
           break;
       }
@@ -137,11 +205,47 @@ export class ArqueroGrid {
     return inputTable.orderby(...sortKeys);
   }
 
+  private applyGroupBy(inputTable: ArqueroTable): { table: ArqueroTable; groups: GroupInfo[] } {
+    if (this._groupBy.length === 0) {
+      return { table: inputTable, groups: [] };
+    }
+
+    const groups: GroupInfo[] = [];
+    const groupColumn = this._groupBy[0];
+    const values = inputTable.objects().map((o: any) => o[groupColumn]);
+    const uniqueValues = [...new Set(values)];
+    let currentRow = 0;
+
+    for (const value of uniqueValues) {
+      const groupRows = inputTable.filter((d: any) => d[groupColumn] === value);
+      const rowCount = groupRows.numRows();
+      const isCollapsed = this._groupStates.get(String(value)) ?? false;
+
+      groups.push({
+        headerIndex: currentRow,
+        isCollapsed,
+        key: String(value),
+        rowCount,
+        subGroups: this._groupBy.length > 1 ? [] : []
+      });
+
+      currentRow += rowCount + 1;
+    }
+
+    return { table: inputTable, groups };
+  }
+
   getView(): ArqueroTable {
     let view = this._table;
+    view = this.applyEdits(view);
     view = this.applyFilters(view);
     view = this.applySort(view);
     return view;
+  }
+
+  getDisplayView(): { table: ArqueroTable; groups: GroupInfo[] } {
+    let view = this.getView();
+    return this.applyGroupBy(view);
   }
 
   private getStagedKey(column: string, row: number): string {
@@ -154,32 +258,66 @@ export class ArqueroGrid {
       return this.staged.get(key);
     }
 
-    const view = this.getView();
-    const obj = view.object(row) as any;
+    const { table: view, groups } = this.getDisplayView();
+    
+    for (const group of groups) {
+      if (row === group.headerIndex) {
+        return undefined;
+      }
+      if (group.isCollapsed) {
+        if (row < group.headerIndex) break;
+        if (row <= group.headerIndex + group.rowCount) {
+          return undefined;
+        }
+      }
+    }
+
+    const adjustedRow = this.adjustRowForGroups(row, groups);
+    if (adjustedRow < 0) return undefined;
+    
+    const obj = view.object(adjustedRow) as any;
     if (obj && column in obj) {
       return obj[column];
     }
     return undefined;
   }
 
+  private adjustRowForGroups(row: number, groups: GroupInfo[]): number {
+    if (groups.length === 0) return row;
+    
+    let offset = 0;
+    for (const group of groups) {
+      if (row < group.headerIndex) break;
+      offset += 1;
+      if (group.isCollapsed) {
+        offset += group.rowCount;
+      }
+    }
+    return row - offset;
+  }
+
   setCell(column: string, row: number, newValue: any): void {
-    const view = this.getView();
-    const obj = view.object(row) as any;
+    const { table: view, groups } = this.getDisplayView();
+    const adjustedRow = this.adjustRowForGroups(row, groups);
+    
+    if (adjustedRow < 0) return;
+    
+    const obj = view.object(adjustedRow) as any;
     const oldValue = obj ? obj[column] : undefined;
 
     if (oldValue === newValue) {
-      const key = this.getStagedKey(column, row);
+      const key = this.getStagedKey(column, adjustedRow);
       this.staged.delete(key);
       return;
     }
 
-    const key = this.getStagedKey(column, row);
+    const key = this.getStagedKey(column, adjustedRow);
     this.staged.set(key, newValue);
 
     const change: CellChange = {
       type: "cell",
       column,
-      row,
+      row: adjustedRow,
       oldValue,
       newValue
     };
@@ -187,35 +325,35 @@ export class ArqueroGrid {
     this.redoStack = [];
   }
 
-  setData(data: any[]): void {
-    this._table = table(data) as ArqueroTable;
-    this.columnNames = this._table.columnNames();
+  setData(data: Table): void {
+    this._table = data as ArqueroTable;
     this.staged.clear();
     this.undoStack = [];
     this.redoStack = [];
   }
 
-  commit(): void {
-    if (this.staged.size === 0) return;
+  commit(): ArqueroTable {
+    if (this.staged.size === 0) return this._table;
 
-    const updates: Record<string, Record<string, any>> = {};
-
+    const edits: Record<string, Record<number, any>> = {};
+    
     for (const [key, value] of this.staged) {
-      const [column] = key.split(":");
-      if (!updates[column]) {
-        updates[column] = {};
+      const [column, rowStr] = key.split(":");
+      const row = parseInt(rowStr, 10);
+      if (!edits[column]) {
+        edits[column] = {};
       }
-      updates[column][key] = value;
+      edits[column][row] = value;
     }
 
     const colUpdates: Record<string, any[]> = {};
+    const numRows = this._table.numRows();
 
-    for (const [column, rowUpdates] of Object.entries(updates)) {
+    for (const [column, rowEdits] of Object.entries(edits)) {
       const currentCol = this._table.column(column) as any;
       const newValues = [...currentCol];
 
-      for (const [key, newValue] of Object.entries(rowUpdates)) {
-        const [, rowStr] = key.split(":");
+      for (const [rowStr, newValue] of Object.entries(rowEdits)) {
         const row = parseInt(rowStr, 10);
         if (!isNaN(row) && row >= 0 && row < newValues.length) {
           newValues[row] = newValue;
@@ -226,6 +364,8 @@ export class ArqueroGrid {
 
     this._table = this._table.derive(colUpdates) as ArqueroTable;
     this.staged.clear();
+    
+    return this._table;
   }
 
   rollback(): void {
@@ -272,16 +412,20 @@ export class ArqueroGrid {
     this._sortBy = this._sortBy.filter(s => s.column !== column);
   }
 
-  setFilter(column: string, spec: FilterSpec | undefined): void {
-    if (spec) {
-      this._filters.set(column, spec);
-    } else {
-      this._filters.delete(column);
-    }
+  setFilters(filters: FilterSpec[]): void {
+    this._filters = filters;
+  }
+
+  addFilter(filter: FilterSpec): void {
+    this._filters.push(filter);
+  }
+
+  removeFilter(index: number): void {
+    this._filters.splice(index, 1);
   }
 
   clearFilters(): void {
-    this._filters.clear();
+    this._filters = [];
   }
 
   setAggregates(aggregates: Record<string, AggregateSpec>): void {
@@ -302,31 +446,7 @@ export class ArqueroGrid {
   }
 
   buildGrouping(): GroupInfo[] {
-    if (this._groupBy.length === 0) return [];
-
-    const view = this.getView();
-    const groups: GroupInfo[] = [];
-    const column = this._groupBy[0];
-    const values = view.objects().map((o: any) => o[column]);
-    const uniqueValues = [...new Set(values)];
-    let currentRow = 0;
-
-    for (const value of uniqueValues) {
-      const groupRows = view.filter((d: any) => d[column] === value);
-      const rowCount = groupRows.numRows();
-
-      const isCollapsed = this.getGroupState(String(value));
-
-      groups.push({
-        headerIndex: currentRow,
-        isCollapsed,
-        key: String(value),
-        subGroups: this._groupBy.length > 1 ? [] : []
-      });
-
-      currentRow += rowCount + 1;
-    }
-
+    const { groups } = this.getDisplayView();
     return groups;
   }
 
@@ -362,6 +482,11 @@ export class ArqueroGrid {
         case "median":
           aggObj[asName] = (d: any) => op.median(d[colName]);
           break;
+        case "weightedAvg":
+          if (spec.weightColumn) {
+            aggObj[asName] = (d: any) => op.sum(d[colName] * d[spec.weightColumn!]) / op.sum(d[spec.weightColumn!]);
+          }
+          break;
         case "custom":
           if (spec.fn) {
             aggObj[asName] = (d: any) => spec.fn!(d[colName]);
@@ -374,10 +499,22 @@ export class ArqueroGrid {
   }
 
   getColumnNames(): string[] {
-    return [...this.columnNames];
+    return this._table.columnNames();
   }
 
   getRowCount(): number {
-    return this.getView().numRows();
+    const { table: view, groups } = this.getDisplayView();
+    const baseRows = view.numRows();
+    return baseRows + groups.length;
+  }
+
+  isColumnEditable(columnId: string, editable: boolean | Record<string, boolean> | undefined): boolean {
+    if (this._groupBy.length > 0) return false;
+    if (editable === undefined || editable === false) return false;
+    if (typeof editable === "boolean") return editable;
+    if (typeof editable === "object") {
+      return editable[columnId] ?? false;
+    }
+    return false;
   }
 }

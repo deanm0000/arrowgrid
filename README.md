@@ -6,22 +6,23 @@ A TypeScript library that combines [glide-data-grid](https://github.com/glideapp
 
 ```tsx
 import { useArqueroGrid } from 'arrowgrid';
+import { table } from 'arquero';
 import { DataEditor } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
 
 function App() {
+  const data = table([
+    { name: 'Alice', value: 100, category: 'A' },
+    { name: 'Bob', value: 200, category: 'B' },
+    { name: 'Charlie', value: 150, category: 'A' },
+  ]);
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A' },
-      { name: 'Bob', value: 200, category: 'B' },
-      { name: 'Charlie', value: 150, category: 'A' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
-    ],
+    data,
     editable: true,
+    onDataChange: (newTable) => {
+      console.log('New data:', newTable.objects());
+    },
   });
 
   return (
@@ -37,22 +38,18 @@ function App() {
 
 ## Grouping
 
-Enable row grouping by specifying columns to group by:
+Enable row grouping by specifying columns to group by. When grouped, editing is disabled (no 1:1 relationship between display rows and data rows):
 
 ```tsx
 function GroupedGrid() {
+  const data = table([
+    { name: 'Alice', value: 100, category: 'A', region: 'North' },
+    { name: 'Bob', value: 200, category: 'B', region: 'South' },
+    { name: 'Charlie', value: 150, category: 'A', region: 'North' },
+  ]);
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A', region: 'North' },
-      { name: 'Bob', value: 200, category: 'B', region: 'South' },
-      { name: 'Charlie', value: 150, category: 'A', region: 'North' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
-      { id: 'region', title: 'Region', width: 100 },
-    ],
+    data,
     groupBy: ['category'],
   });
 
@@ -71,22 +68,19 @@ To toggle group collapse state:
 
 ```tsx
 function GroupedGridWithToggle() {
+  const data = table([
+    { name: 'Alice', value: 100, category: 'A' },
+    { name: 'Bob', value: 200, category: 'B' },
+    { name: 'Charlie', value: 150, category: 'A' },
+  ]);
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A' },
-      { name: 'Bob', value: 200, category: 'B' },
-      { name: 'Charlie', value: 150, category: 'A' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
-    ],
+    data,
     groupBy: ['category'],
   });
 
-  const handleGroupHeaderClick = (groupKey: string) => {
-    grid.toggleGroup(groupKey); // Toggle collapse state
+  const handleGroupToggle = (groupKey: string) => {
+    grid.toggleGroup(groupKey);
   };
 
   return (
@@ -106,17 +100,14 @@ Sort by clicking column headers or programmatically:
 
 ```tsx
 function SortedGrid() {
+  const data = table([
+    { name: 'Alice', value: 100, category: 'A' },
+    { name: 'Bob', value: 200, category: 'B' },
+    { name: 'Charlie', value: 150, category: 'A' },
+  ]);
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A' },
-      { name: 'Bob', value: 200, category: 'B' },
-      { name: 'Charlie', value: 150, category: 'A' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
-    ],
+    data,
     sortBy: [
       { column: 'value', desc: true },  // Sort by value descending
     ],
@@ -127,17 +118,6 @@ function SortedGrid() {
       columns={grid.columns}
       getCellContent={grid.getCellContent}
       rows={grid.rows}
-      onHeaderClicked={(col) => {
-        const column = grid.columns[col];
-        const currentSort = grid.sortBy.find(s => s.column === column.id);
-        // Toggle sort direction
-        grid.setSortBy([
-          { 
-            column: column.id as string, 
-            desc: currentSort ? !currentSort.desc : true 
-          }
-        ]);
-      }}
     />
   );
 }
@@ -145,29 +125,23 @@ function SortedGrid() {
 
 ## Filtering
 
-Filter data by column values:
+Filter data by column values using an array of filter specs:
 
 ```tsx
 function FilteredGrid() {
+  const data = table([
+    { name: 'Alice', value: 100, category: 'A' },
+    { name: 'Bob', value: 200, category: 'B' },
+    { name: 'Charlie', value: 150, category: 'A' },
+  ]);
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A' },
-      { name: 'Bob', value: 200, category: 'B' },
-      { name: 'Charlie', value: 150, category: 'A' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
+    data,
+    filters: [
+      { column: 'category', op: '==', value: 'A' },
+      { column: 'value', op: '>', value: 100 },
     ],
   });
-
-  // Apply filters
-  grid.setFilter('category', { type: 'equals', value: 'A' });
-  grid.setFilter('value', { type: 'gt', value: 100 });
-
-  // Clear filters
-  grid.clearFilters();
 
   return (
     <DataEditor
@@ -179,30 +153,45 @@ function FilteredGrid() {
 }
 ```
 
-Filter types available:
-- `equals` - Exact match
-- `contains` - Substring match (for strings)
-- `gt`, `gte`, `lt`, `lte` - Numeric comparisons
+Filter operators available:
+- `==` - Equals
+- `!=` - Not equals
+- `>` - Greater than
+- `<` - Less than
+- `>=` - Greater or equal
+- `<=` - Less or equal
+- `contains` - Substring match
+- `startsWith` - Starts with
+- `endsWith` - Ends with
 - `in` - Match any value in a list
-- `custom` - Custom predicate function
+
+Compare to another column:
+```tsx
+{ column: 'value', op: '>', otherColumn: 'limit' }
+```
+
+Custom predicate function:
+```tsx
+{ expr: (d) => d.value > 0 && d.value < 100 }
+```
 
 ## Editing with Undo/Redo
 
-Changes are staged until explicitly committed:
+Changes are staged until explicitly committed. When `commit()` is called, the `onDataChange` callback receives the updated table with all edits applied:
 
 ```tsx
 function EditableGridWithHistory() {
+  const [data, setData] = useState(() => table([
+    { name: 'Alice', value: 100, category: 'A' },
+    { name: 'Bob', value: 200, category: 'B' },
+  ]));
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A' },
-      { name: 'Bob', value: 200, category: 'B' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
-    ],
+    data,
     editable: true,
+    onDataChange: (newTable) => {
+      setData(newTable);
+    },
   });
 
   return (
@@ -242,9 +231,34 @@ function EditableGridWithHistory() {
 ### How Staged Editing Works
 
 1. When a cell is edited, the change is staged (not yet saved to the underlying data)
-2. Call `grid.commit()` to save all staged changes to the arquero table
+2. Call `grid.commit()` to save all staged changes and call `onDataChange` with the new table
 3. Call `grid.rollback()` to discard all staged changes
 4. Use `grid.undo()` / `grid.redo()` to navigate the edit history
+
+### Per-Column Editability
+
+Control which columns are editable:
+
+```tsx
+const grid = useArqueroGrid({
+  data,
+  editable: {
+    name: true,   // editable
+    value: true,  // editable
+    category: false,  // not editable
+  },
+});
+```
+
+Or enable/disable all editing:
+```tsx
+const grid = useArqueroGrid({
+  data,
+  editable: false,  // nothing editable
+});
+```
+
+Note: When `groupBy` is set, all editing is disabled regardless of this setting.
 
 ## Aggregation
 
@@ -252,27 +266,22 @@ Combine grouping with aggregation functions:
 
 ```tsx
 function AggregatedGrid() {
+  const data = table([
+    { name: 'Alice', value: 100, weight: 1, category: 'A' },
+    { name: 'Bob', value: 200, weight: 2, category: 'B' },
+    { name: 'Charlie', value: 150, weight: 1, category: 'A' },
+  ]);
+
   const grid = useArqueroGrid({
-    data: [
-      { name: 'Alice', value: 100, category: 'A' },
-      { name: 'Bob', value: 200, category: 'B' },
-      { name: 'Charlie', value: 150, category: 'A' },
-    ],
-    columns: [
-      { id: 'name', title: 'Name', width: 150 },
-      { id: 'value', title: 'Value', width: 100 },
-      { id: 'category', title: 'Category', width: 100 },
-    ],
+    data,
     groupBy: ['category'],
     aggregates: {
       totalValue: { op: 'sum', column: 'value' },
       avgValue: { op: 'mean', column: 'value', as: 'avg' },
       count: { op: 'count', as: 'rowCount' },
+      weightedAvg: { op: 'weightedAvg', column: 'value', weightColumn: 'weight' },
     },
   });
-
-  // Get aggregated data
-  const aggregatedData = grid.getAggregatedData();
 
   return (
     <DataEditor
@@ -291,6 +300,7 @@ Supported aggregate operations:
 - `min` - Minimum value
 - `max` - Maximum value
 - `median` - Median value
+- `weightedAvg` - Weighted average using `sum(value * weightColumn) / sum(weightColumn)`
 - `custom` - Custom aggregation function
 
 ## API Reference
@@ -305,13 +315,14 @@ function useArqueroGrid(props: UseArqueroGridProps): UseArqueroGridResult
 
 | Prop | Type | Description |
 |------|------|-------------|
-| `data` | `any[]` | Array of row objects |
-| `columns` | `GridColumn[]` | Column definitions |
+| `data` | `Table` | Arquero table |
 | `groupBy` | `string[]` | Columns to group by |
 | `sortBy` | `SortSpec[]` | Initial sort configuration |
-| `filters` | `Map<string, FilterSpec>` | Initial filters |
-| `editable` | `boolean` | Enable cell editing (default: true) |
+| `filters` | `FilterSpec[]` | Initial filters (array) |
+| `aggregates` | `Record<string, AggregateSpec>` | Aggregation config |
+| `editable` | `boolean \| Record<string, boolean>` | Editability (default: false) |
 | `onCellChange` | `(col, row, old, new) => void` | Callback when cell changes |
+| `onDataChange` | `(newTable: Table) => void` | Callback when commit is called |
 
 #### Return Value
 
@@ -322,57 +333,18 @@ function useArqueroGrid(props: UseArqueroGridProps): UseArqueroGridResult
 | `onCellEdited` | `(cell, newValue) => void` | Handle cell edits |
 | `rows` | `number` | Number of rows |
 | `groups` | `RowGroup[]` | Group definitions |
-| `filters` | `Map<string, FilterSpec>` | Active filters |
+| `filters` | `FilterSpec[]` | Active filters |
+| `setFilter` | `(filter: FilterSpec) => void` | Add a filter |
+| `removeFilter` | `(index: number) => void` | Remove a filter |
+| `clearFilters` | `() => void` | Clear all filters |
 | `stagedCount` | `number` | Number of staged changes |
 | `canUndo` | `boolean` | Whether undo is available |
 | `canRedo` | `boolean` | Whether redo is available |
-| `setFilter` | `(column, spec) => void` | Set a filter |
-| `clearFilters` | `() => void` | Clear all filters |
 | `commit` | `() => void` | Commit staged changes |
 | `rollback` | `() => void` | Rollback staged changes |
 | `undo` | `() => void` | Undo last change |
 | `redo` | `() => boolean` | Redo last undone change |
 | `toggleGroup` | `(key) => void` | Toggle group collapse |
-
-### ArqueroGrid Class
-
-```typescript
-class ArqueroGrid {
-  constructor(data?: any[])
-  
-  // Data access
-  getCell(column: string, row: number): any
-  setCell(column: string, row: number, value: any): void
-  setData(data: any[]): void
-  getView(): Table
-  
-  // History
-  commit(): void
-  rollback(): void
-  undo(): void
-  redo(): boolean
-  get canUndo(): boolean
-  get canRedo(): boolean
-  get stagedCount(): number
-  
-  // Transformations
-  setGroupBy(columns: string[]): void
-  setSortBy(sort: SortSpec[]): void
-  addSort(column: string, desc?: boolean): void
-  removeSort(column: string): void
-  setFilter(column: string, spec: FilterSpec | undefined): void
-  clearFilters(): void
-  
-  // Grouping
-  toggleGroup(key: string): void
-  getGroupState(key: string): boolean
-  buildGrouping(): GroupInfo[]
-  
-  // Aggregation
-  setAggregates(aggregates: Record<string, AggregateSpec>): void
-  getAggregatedData(): Table | null
-}
-```
 
 ### Types
 
@@ -383,15 +355,17 @@ interface SortSpec {
 }
 
 interface FilterSpec {
-  type: "equals" | "contains" | "gt" | "gte" | "lt" | "lte" | "in" | "custom";
+  column?: string;
+  op?: string;
   value?: any;
-  values?: any[];
-  predicate?: (value: any) => boolean;
+  otherColumn?: string;
+  expr?: (d: any) => boolean;
 }
 
 interface AggregateSpec {
-  op: "sum" | "mean" | "avg" | "count" | "min" | "max" | "median" | "custom";
+  op: "sum" | "mean" | "avg" | "count" | "min" | "max" | "median" | "weightedAvg" | "custom";
   column?: string;
+  weightColumn?: string;
   fn?: (values: any[]) => any;
   as?: string;
 }

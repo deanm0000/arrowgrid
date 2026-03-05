@@ -4,41 +4,44 @@ import type { FilterSpec } from "../../types";
 export interface ColumnFilterProps {
   columnId: string;
   currentFilter?: FilterSpec;
-  onFilterChange: (column: string, spec: FilterSpec | undefined) => void;
+  onFilterAdd: (filter: FilterSpec) => void;
+  onFilterRemove: () => void;
   uniqueValues?: any[];
 }
 
 export function ColumnFilter({
   columnId,
   currentFilter,
-  onFilterChange,
+  onFilterAdd,
+  onFilterRemove,
   uniqueValues = [],
 }: ColumnFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [filterType, setFilterType] = useState<FilterSpec["type"]>(
-    currentFilter?.type || "equals"
+  const [filterOp, setFilterOp] = useState<string>(
+    currentFilter?.op || "=="
   );
   const [filterValue, setFilterValue] = useState<any>(
     currentFilter?.value ?? ""
   );
 
   const handleApply = useCallback(() => {
-    if (filterType === "equals" && filterValue === "") {
-      onFilterChange(columnId, undefined);
+    if (filterOp === "==" && filterValue === "") {
+      onFilterRemove();
     } else {
-      onFilterChange(columnId, {
-        type: filterType,
+      onFilterAdd({
+        column: columnId,
+        op: filterOp,
         value: filterValue,
       });
     }
     setIsOpen(false);
-  }, [columnId, filterType, filterValue, onFilterChange]);
+  }, [columnId, filterOp, filterValue, onFilterAdd, onFilterRemove]);
 
   const handleClear = useCallback(() => {
     setFilterValue("");
-    onFilterChange(columnId, undefined);
+    onFilterRemove();
     setIsOpen(false);
-  }, [columnId, onFilterChange]);
+  }, [onFilterRemove]);
 
   return (
     <div className="column-filter">
@@ -53,19 +56,22 @@ export function ColumnFilter({
       {isOpen && (
         <div className="filter-dropdown">
           <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as FilterSpec["type"])}
+            value={filterOp}
+            onChange={(e) => setFilterOp(e.target.value)}
           >
-            <option value="equals">Equals</option>
+            <option value="==">Equals</option>
+            <option value="!=">Not equals</option>
+            <option value=">">Greater than</option>
+            <option value="<">Less than</option>
+            <option value=">=">Greater or equal</option>
+            <option value="<=">Less or equal</option>
             <option value="contains">Contains</option>
-            <option value="gt">Greater than</option>
-            <option value="gte">Greater or equal</option>
-            <option value="lt">Less than</option>
-            <option value="lte">Less or equal</option>
+            <option value="startsWith">Starts with</option>
+            <option value="endsWith">Ends with</option>
             {uniqueValues.length > 0 && <option value="in">In list</option>}
           </select>
 
-          {filterType === "in" ? (
+          {filterOp === "in" ? (
             <select
               multiple
               value={Array.isArray(filterValue) ? filterValue : []}

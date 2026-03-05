@@ -1,38 +1,33 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import type { Table } from "arquero";
 import type { GridColumn, GridCell, Item, EditableGridCell, RowGroup, RowGroupingOptions } from "@glideapps/glide-data-grid";
 import { useRowGrouping } from "@glideapps/glide-data-grid";
 import { ArqueroGrid } from "../ArqueroGrid";
 import { toGridCell, getCellKind } from "../convert/toGridCell";
 import { fromGridCell } from "../convert/fromGridCell";
-import type { SortSpec, FilterSpec, UseArqueroGridResult } from "../types";
-
-export interface UseArqueroGridProps {
-  data: any[];
-  columns: GridColumn[];
-  groupBy?: string[];
-  sortBy?: SortSpec[];
-  filters?: Map<string, FilterSpec>;
-  editable?: boolean;
-  onCellChange?: (column: string, row: number, oldValue: any, newValue: any) => void;
-}
+import type { SortSpec, FilterSpec, UseArqueroGridResult, UseArqueroGridProps } from "../types";
 
 export function useArqueroGrid(
   props: UseArqueroGridProps
 ): UseArqueroGridResult {
   const {
     data,
-    columns,
     groupBy = [],
     sortBy = [],
-    filters: initialFilters,
-    editable = true,
+    filters: initialFilters = [],
+    aggregates = {},
+    editable,
     onCellChange,
+    onDataChange,
   } = props;
 
-  const [grid] = useState(() => new ArqueroGrid(data));
-  const [filters, setFilters] = useState<Map<string, FilterSpec>>(
-    initialFilters || new Map()
-  );
+  const gridRef = useRef<ArqueroGrid | null>(null);
+  if (!gridRef.current) {
+    gridRef.current = new ArqueroGrid(data);
+  }
+  const grid = gridRef.current;
+
+  const [filters, setFilters] = useState<FilterSpec[]>(initialFilters);
 
   useEffect(() => {
     grid.setData(data);
@@ -47,59 +42,65 @@ export function useArqueroGrid(
   }, [grid, sortBy]);
 
   useEffect(() => {
-    for (const [column, spec] of filters) {
-      grid.setFilter(column, spec);
-    }
+    grid.setFilters(filters);
   }, [grid, filters]);
+
+  useEffect(() => {
+    grid.setAggregates(aggregates);
+  }, [grid, aggregates]);
 
   const columnKinds = useMemo(() => {
     const kinds: Record<string, "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid"> = {};
-    if (data.length > 0) {
-      const sample = data[0];
-      for (const col of columns) {
-        const colId = col.id || String(col.title);
-        const sampleValue = sample[colId];
-        kinds[colId] = getCellKind(colId, sampleValue);
+    const columnNames = grid.getColumnNames();
+    const sampleObj = grid.table.object(0) as any;
+    
+    if (sampleObj) {
+      for (const colName of columnNames) {
+        const sampleValue = sampleObj[colName];
+        kinds[colName] = getCellKind(colName, sampleValue);
       }
     }
     return kinds;
-  }, [data, columns]);
+  }, [grid]);
 
   const getCellContent = useCallback(
     (cell: Item): GridCell => {
       const [col, row] = cell;
-      const column = columns[col];
+      const column = gridRef.current?.table.columnNames()[col];
       if (!column) {
         return toGridCell(null);
       }
 
-      const columnId = column.id || String(column.title);
-      const value = grid.getCell(columnId, row);
-      const kind = columnKinds[columnId] || "text";
+      const value = gridRef.current?.getCell(column, row);
+      const kind = columnKinds[column] || "text";
 
       return toGridCell(value, kind);
     },
-    [columns, grid, columnKinds]
+    [columnKinds]
   );
+
+  const isEditable = useCallback((columnId: string): boolean => {
+    if (!gridRef.current) return false;
+    return gridRef.current.isColumnEditable(columnId, editable);
+  }, [editable]);
 
   const onCellEdited = useCallback(
     (cell: Item, newCell: EditableGridCell): void => {
-      if (!editable) return;
-
       const [col, row] = cell;
-      const column = columns[col];
-      if (!column) return;
+      const column = gridRef.current?.table.columnNames()[col];
+      if (!column || !gridRef.current) return;
 
-      const columnId = column.id || String(column.title);
+      if (!isEditable(column)) return;
+
       const newValue = fromGridCell(newCell);
-      const oldValue = grid.getCell(columnId, row);
+      const oldValue = gridRef.current.getCell(column, row);
 
       if (newValue !== oldValue) {
-        grid.setCell(columnId, row, newValue);
-        onCellChange?.(columnId, row, oldValue, newValue);
+        gridRef.current.setCell(column, row, newValue);
+        onCellChange?.(column, row, oldValue, newValue);
       }
     },
-    [columns, grid, editable, onCellChange]
+    [isEditable, onCellChange]
   );
 
   const rows = grid.getRowCount();
@@ -116,31 +117,31 @@ export function useArqueroGrid(
     };
   }, [grid, groupBy]);
 
-  const { mapper, updateRowGroupingByPath, getRowGroupingForPath } = useRowGrouping(groups, rows);
+  useRowGrouping(groups, rows);
 
   const setFilter = useCallback(
-    (column: string, spec: FilterSpec | undefined) => {
-      setFilters((prev) => {
-        const next = new Map(prev);
-        if (spec) {
-          next.set(column, spec);
-        } else {
-          next.delete(column);
-        }
-        return next;
-      });
+    (filter: FilterSpec) => {
+      setFilters((prev) => [...prev, filter]);
+    },
+    []
+  );
+
+  const removeFilter = useCallback(
+    (index: number) => {
+      setFilters((prev) => prev.filter((_, i) => i !== index));
     },
     []
   );
 
   const clearFilters = useCallback(() => {
-    setFilters(new Map());
+    setFilters([]);
     grid.clearFilters();
   }, [grid]);
 
   const commit = useCallback(() => {
-    grid.commit();
-  }, [grid]);
+    const newTable = grid.commit();
+    onDataChange?.(newTable);
+  }, [grid, onDataChange]);
 
   const rollback = useCallback(() => {
     grid.rollback();
@@ -154,14 +155,24 @@ export function useArqueroGrid(
     return grid.redo();
   }, [grid]);
 
+  const toggleGroup = useCallback((key: string) => {
+    grid.toggleGroup(key);
+  }, [grid]);
+
   return {
-    columns,
+    columns: grid.table.columnNames().map((name, idx) => ({
+      id: name,
+      title: name,
+      width: 100,
+    })) as GridColumn[],
     getCellContent,
     onCellEdited,
     rows,
     groups: groups?.groups,
     filters,
     setFilter,
+    removeFilter,
+    clearFilters,
     stagedCount: grid.stagedCount,
     commit,
     rollback,
@@ -169,6 +180,6 @@ export function useArqueroGrid(
     redo,
     canUndo: grid.canUndo,
     canRedo: grid.canRedo,
-    clearFilters,
+    toggleGroup,
   };
 }

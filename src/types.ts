@@ -1,3 +1,4 @@
+import type { Table } from "arquero";
 import type { GridColumn } from "@glideapps/glide-data-grid";
 
 export interface SortSpec {
@@ -6,17 +7,19 @@ export interface SortSpec {
 }
 
 export interface AggregateSpec {
-  op: "sum" | "mean" | "avg" | "count" | "min" | "max" | "median" | "custom";
+  op: "sum" | "mean" | "avg" | "count" | "min" | "max" | "median" | "weightedAvg" | "custom";
   column?: string;
+  weightColumn?: string;
   fn?: (values: any[]) => any;
   as?: string;
 }
 
 export interface FilterSpec {
-  type: "equals" | "contains" | "gt" | "gte" | "lt" | "lte" | "in" | "custom";
+  column?: string;
+  op?: string;
   value?: any;
-  values?: any[];
-  predicate?: (value: any) => boolean;
+  otherColumn?: string;
+  expr?: (d: any) => boolean;
 }
 
 export interface CellChange {
@@ -34,23 +37,27 @@ export interface BulkChange {
 
 export type Change = CellChange | BulkChange;
 
-export interface GridConfig {
-  data: any[];
-  columns: GridColumn[];
+export interface UseArqueroGridProps {
+  data: Table;
   groupBy?: string[];
   sortBy?: SortSpec[];
+  filters?: FilterSpec[];
   aggregates?: Record<string, AggregateSpec>;
-  editable?: boolean;
+  editable?: boolean | Record<string, boolean>;
+  onCellChange?: (column: string, row: number, oldValue: any, newValue: any) => void;
+  onDataChange?: (newTable: Table) => void;
 }
 
 export interface UseArqueroGridResult {
   columns: GridColumn[];
-  getCellContent: (cell: [number, number]) => any;
-  onCellEdited: (cell: [number, number], newValue: any) => void;
+  getCellContent: (cell: readonly [number, number]) => any;
+  onCellEdited: (cell: readonly [number, number], newValue: any) => void;
   rows: number;
   groups?: readonly (number | { readonly headerIndex: number; readonly isCollapsed: boolean; readonly subGroups?: readonly any[] })[];
-  filters: Map<string, FilterSpec>;
-  setFilter: (column: string, spec: FilterSpec | undefined) => void;
+  filters: FilterSpec[];
+  setFilter: (filter: FilterSpec) => void;
+  removeFilter: (index: number) => void;
+  clearFilters: () => void;
   stagedCount: number;
   commit: () => void;
   rollback: () => void;
@@ -58,5 +65,26 @@ export interface UseArqueroGridResult {
   redo: () => boolean;
   canUndo: boolean;
   canRedo: boolean;
-  clearFilters: () => void;
+  toggleGroup: (key: string) => void;
+}
+
+export interface UseColumnFiltersProps {
+  initialFilters?: FilterSpec[];
+  onFilterChange?: (filters: FilterSpec[]) => void;
+}
+
+export interface ColumnFilterProps {
+  columnId: string;
+  currentFilter?: FilterSpec;
+  onFilterAdd: (filter: FilterSpec) => void;
+  onFilterRemove: () => void;
+  uniqueValues?: any[];
+}
+
+export interface GroupHeaderProps {
+  groupKey: string;
+  groupColumn: string;
+  isCollapsed: boolean;
+  rowCount: number;
+  onToggle: (groupKey: string) => void;
 }
