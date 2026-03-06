@@ -1,5 +1,3 @@
-export { ArqueroGrid } from "./ArqueroGrid";
-
 export { toGridCell, getCellKind } from "./convert/toGridCell";
 export { fromGridCell, parseValue } from "./convert/fromGridCell";
 

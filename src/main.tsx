@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { from, Table } from 'arquero';
 import { DataEditor } from '@glideapps/glide-data-grid';
@@ -19,25 +19,46 @@ const sampleData = from([
 function App() {
   const [data, setData] = useState<any>(sampleData);
 
-  const grid = useArqueroGrid({
-    data,
-    groupBy: [],
-    sortBy: [{ column: 'value', desc: false }],
-    filters: [],
-    editable: {
+  const groupBy = useMemo(() => [], []);
+
+  const sortBy = useMemo(
+    () => [{ column: 'value', desc: false }],
+    []
+  );
+
+  const filters = useMemo(() => [], []);
+
+  const editable = useMemo(
+    () => ({
       name: true,
       value: true,
       region: true,
       category: false,
       weight: true,
-    },
-    onDataChange: (newTable) => {
-      console.log('Data changed:', newTable.objects());
-      setData(newTable);
-    },
-    onCellChange: (col, row, oldVal, newVal) => {
+    }),
+    []
+  );
+
+  const onDataChange = useCallback((newTable: Table) => {
+    console.log('Data changed:', newTable.objects());
+    setData(newTable);
+  }, []);
+
+  const onCellChange = useCallback(
+    (col: string, row: number, oldVal: unknown, newVal: unknown) => {
       console.log(`Cell changed: ${col}[${row}] from ${oldVal} to ${newVal}`);
     },
+    []
+  );
+
+  const grid = useArqueroGrid({
+    data,
+    groupBy,
+    sortBy,
+    filters,
+    editable,
+    onDataChange,
+    onCellChange,
   });
 
   return (
