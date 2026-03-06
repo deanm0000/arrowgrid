@@ -1,21 +1,14 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import type { ColumnTable, Table } from "arquero";
 import { table, op, from, desc as aqDesc, escape } from "arquero";
-import type { GridColumn, GridCell, Item, EditableGridCell, RowGroup, RowGroupingOptions } from "@glideapps/glide-data-grid";
-import { useRowGrouping } from "@glideapps/glide-data-grid";
+import type { GridColumn, GridCell, Item, EditableGridCell } from "@glideapps/glide-data-grid";
 import { toGridCell, getCellKind } from "../convert/toGridCell";
 import { fromGridCell } from "../convert/fromGridCell";
 import type { SortSpec, FilterSpec, CellChange, UseArqueroGridResult, UseArqueroGridProps } from "../types";
 
 
 
-interface GroupInfo {
-  headerIndex: number;
-  isCollapsed: boolean;
-  key: string;
-  rowCount: number;
-  subGroups: GroupInfo[] | undefined;
-}
+// grouping now handled via Arquero groupby + rollup
 
 export function useArqueroGrid(
   props: UseArqueroGridProps
@@ -37,7 +30,7 @@ export function useArqueroGrid(
   const [staged, setStaged] = useState<Map<string, Map<number, any>>>(new Map());
   const [undoStack, setUndoStack] = useState<CellChange[]>([]);
   const [redoStack, setRedoStack] = useState<CellChange[]>([]);
-  const [groupStates, setGroupStates] = useState<Map<string, boolean>>(new Map());
+  // no UI-level grouping state; grouping is data-driven
 
   const baseTable = useMemo(() => {
     const tableWRows = data.derive({
@@ -162,55 +155,63 @@ export function useArqueroGrid(
 
   const applySort = useCallback((inputTable: ColumnTable): ColumnTable => {
     if (sortBy.length === 0) return inputTable;
-    const sortKeys = sortBy.map(s => s.desc ? aqDesc(s.column) : s.column);
+    const sortKeys = sortBy.map(s => s.desc ?  s.column:aqDesc(s.column));
     return inputTable.orderby(...sortKeys);
   }, [sortBy]);
 
-  const applyGroupBy = useCallback((inputTable: ColumnTable): { table: ColumnTable; groups: GroupInfo[] } => {
-    if (groupBy.length === 0) {
-      return { table: inputTable, groups: [] };
-    }
-
-    const groups: GroupInfo[] = [];
-    const groupColumn = groupBy[0];
-    const values = inputTable.objects().map((o: any) => o[groupColumn]);
-    const uniqueValues = [...new Set(values)];
-    let currentRow = 0;
-
-    for (const value of uniqueValues) {
-      const groupRows = inputTable.filter((d: any) => d[groupColumn] === value);
-      const rowCount = groupRows.numRows();
-      const isCollapsed = groupStates.get(String(value)) ?? false;
-
-      groups.push({
-        headerIndex: currentRow,
-        isCollapsed,
-        key: String(value),
-        rowCount,
-        subGroups: groupBy.length > 1 ? [] : []
-      });
-
-      currentRow += rowCount + 1;
-    }
-
-    return { table: inputTable, groups };
-  }, [groupBy, groupStates]);
+  // grouping handled below in finalView memo
 
 
 
-  const view = useMemo(() => {
+  const [view, columnNames] = useMemo(() => {
     let v = baseTable;
 
     v = applyEdits(v);
     v = applyFilters(v);
     v = applySort(v);
 
-    return v;
+    return [v,baseTable.columnNames().filter(n => n !== "__row_id")]
   }, [baseTable, applyEdits, applyFilters, applySort]);
 
-  const displayView = useMemo(() => {
-    return applyGroupBy(view);
-  }, [view, applyGroupBy]);
+  const finalView = useMemo(() => {
+    if (groupBy.length === 0) return view;
+
+    const groupColumn = groupBy[0];
+
+    // detect numeric columns (excluding group column)
+    const numericColumns = columnNames.filter(name => {
+      if (name === groupColumn) return false;
+      const arr = view.array(name);
+      return arr.every((v: any) => v == null || typeof v === "number");
+    });
+
+    const rollupSpec: Record<string, any> = {};
+    for (const col of numericColumns) {
+      rollupSpec[col] = op.sum(col);
+    }
+
+    let grouped = view.groupby(groupColumn).rollup(rollupSpec);
+
+    const existing = grouped.columnNames();
+    for (const col of columnNames) {
+      if (!existing.includes(col)) {
+        grouped = grouped.derive({ [col]: () => null });
+      }
+    }
+
+    grouped = grouped.select(...columnNames);
+
+    // apply sorting to grouped result
+    if (sortBy.length > 0) {
+      const sortKeys = sortBy.map(s =>
+        s.desc ? s.column : aqDesc(s.column)
+      );
+      grouped = grouped.orderby(...sortKeys);
+    }
+
+    return grouped;
+  }, [view, groupBy, columnNames, sortBy]);
+
 
   const columnKinds = useMemo(() => {
     const kinds: Record<string, "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid"> = {};
@@ -234,12 +235,12 @@ export function useArqueroGrid(
         return toGridCell(null);
       }
 
-      const value = view.get(column, row);
+      const value = finalView.get(column, row);
       const kind = columnKinds[column] || "text";
 
       return toGridCell(value, kind);
     },
-    [view, columnKinds]
+    [finalView, columnKinds]
   );
 
   const isColumnEditable = useCallback((columnId: string): boolean => {
@@ -295,26 +296,8 @@ export function useArqueroGrid(
     [view, isColumnEditable, onCellChange]
   );
 
-  const columnNames = baseTable.columnNames().filter(n => n !== "__row_id");
-  const rows = useMemo(() => {
-    const { groups } = displayView;
-    const baseRows = displayView.table.numRows();
-    return baseRows + groups.length;
-  }, [displayView]);
-
-  const groups = useMemo((): RowGroupingOptions | undefined => {
-    if (groupBy.length === 0) return undefined;
-
-    const groupInfo = displayView.groups;
-    if (groupInfo.length === 0) return undefined;
-
-    return {
-      groups: groupInfo as readonly RowGroup[],
-      height: 32,
-    };
-  }, [displayView, groupBy]);
-
-  useRowGrouping(groups, rows);
+  
+  const rows = useMemo(() => finalView.numRows(), [finalView]);
 
   const setFilter = useCallback(
     (filter: FilterSpec) => {
@@ -413,13 +396,7 @@ export function useArqueroGrid(
     return true;
   }, [redoStack, baseTable]);
 
-  const toggleGroup = useCallback((key: string) => {
-    setGroupStates(prev => {
-      const next = new Map(prev);
-      next.set(key, !next.get(key));
-      return next;
-    });
-  }, []);
+  // no row-level toggleGroup anymore
 
   return {
     columns: columnNames.map((name) => ({
@@ -430,7 +407,7 @@ export function useArqueroGrid(
     getCellContent,
     onCellEdited,
     rows,
-    groups: groups?.groups,
+    groups: undefined,
     filters,
     setFilter,
     removeFilter,
@@ -442,6 +419,6 @@ export function useArqueroGrid(
     redo,
     canUndo: undoStack.length > 0,
     canRedo: redoStack.length > 0,
-    toggleGroup,
+    toggleGroup: undefined as any,
   };
 }

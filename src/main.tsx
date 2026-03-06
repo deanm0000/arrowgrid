@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ColumnTable, from, Table } from 'arquero';
-import { DataEditor } from '@glideapps/glide-data-grid';
+import { ColumnTable, from } from 'arquero';
+import { ArqueroGrid } from './react/ArqueroGrid';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { useArqueroGrid } from './react/useArqueroGrid';
 
 const sampleData = from([
   { name: 'Alice', value: 100, category: 'A', region: 'North', weight: 1.0 },
@@ -20,12 +19,9 @@ function App() {
   // console.log(sampleData.objects())
   const [data, setData] = useState<ColumnTable>(sampleData);
 
-  const groupBy = useMemo(() => [], []);
+  const groupBy:string[] = [];
 
-  const sortBy = useMemo(
-    () => [{ column: 'value', desc: false }],
-    []
-  );
+  // Sorting is now handled internally by ArqueroGrid
 
   const filters = useMemo(() => [], []);
 
@@ -52,34 +48,16 @@ function App() {
     []
   );
 
-  const grid = useArqueroGrid({
-    data,
-    groupBy,
-    sortBy,
-    filters,
-    editable,
-    onDataChange,
-    onCellChange,
-  });
-
   return (
     <>
-      <div className="toolbar">
-        <button onClick={grid.undo} disabled={!grid.canUndo}>Undo</button>
-        <button onClick={grid.redo} disabled={!grid.canRedo}>Redo</button>
-        <button onClick={grid.commit}>Commit ({grid.stagedCount} staged)</button>
-        <button onClick={grid.rollback}>Rollback</button>
-        <span style={{ marginLeft: 'auto' }}>
-          Rows: {grid.rows}
-        </span>
-      </div>
       <div className="grid-container">
-        <DataEditor
-          columns={grid.columns}
-          getCellContent={grid.getCellContent}
-          onCellEdited={grid.onCellEdited}
-          rows={grid.rows}
-          className="grid-editor"
+        <ArqueroGrid
+          data={data}
+          groupBy={groupBy}
+          filters={filters}
+          editable={editable}
+          onDataChange={onDataChange}
+          onCellChange={onCellChange}
         />
       </div>
     </>
