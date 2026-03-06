@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { from, Table } from 'arquero';
+import { ColumnTable, from, Table } from 'arquero';
 import { DataEditor } from '@glideapps/glide-data-grid';
 import '@glideapps/glide-data-grid/dist/index.css';
 import { useArqueroGrid } from './react/useArqueroGrid';
@@ -17,7 +17,8 @@ const sampleData = from([
 ]);
 
 function App() {
-  const [data, setData] = useState<any>(sampleData);
+  // console.log(sampleData.objects())
+  const [data, setData] = useState<ColumnTable>(sampleData);
 
   const groupBy = useMemo(() => [], []);
 
@@ -39,7 +40,7 @@ function App() {
     []
   );
 
-  const onDataChange = useCallback((newTable: Table) => {
+  const onDataChange = useCallback((newTable: ColumnTable) => {
     console.log('Data changed:', newTable.objects());
     setData(newTable);
   }, []);

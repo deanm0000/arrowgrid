@@ -1,4 +1,4 @@
-import type { Table } from "arquero";
+import type { ColumnTable, Table } from "arquero";
 import type { GridColumn } from "@glideapps/glide-data-grid";
 
 export interface SortSpec {
@@ -23,11 +23,9 @@ export interface FilterSpec {
 }
 
 export interface CellChange {
-  type: "cell";
-  column: string;
-  row: number;
-  oldValue: any;
-  newValue: any;
+  row: number, 
+  col: string
+  oldVal: string | number | boolean | Date |  undefined
 }
 
 export interface BulkChange {
@@ -38,14 +36,14 @@ export interface BulkChange {
 export type Change = CellChange | BulkChange;
 
 export interface UseArqueroGridProps {
-  data: Table;
+  data: ColumnTable;
   groupBy?: string[];
   sortBy?: SortSpec[];
   filters?: FilterSpec[];
   aggregates?: Record<string, AggregateSpec>;
   editable?: boolean | Record<string, boolean>;
   onCellChange?: (column: string, row: number, oldValue: any, newValue: any) => void;
-  onDataChange?: (newTable: Table) => void;
+  onDataChange?: (newTable: ColumnTable) => void;
 }
 
 export interface UseArqueroGridResult {
