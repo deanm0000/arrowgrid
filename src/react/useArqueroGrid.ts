@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import type { ColumnTable, Table } from "arquero";
 import { table, op, from, desc as aqDesc, escape } from "arquero";
-import type { GridColumn, GridCell, Item, EditableGridCell } from "@glideapps/glide-data-grid";
+import type { GridColumn, GridCell, Item, EditableGridCell, RowGroup } from "@glideapps/glide-data-grid";
 import { toGridCell, getCellKind, CellValue } from "../convert/toGridCell";
 import { fromGridCell } from "../convert/fromGridCell";
 import { AGG_DELIMITER, type SortSpec, type FilterSpec, type CellChange, type UseArqueroGridResult, type UseArqueroGridProps, type RowData } from "../types";
@@ -32,7 +32,7 @@ export function useArqueroGrid(
   const [staged, setStaged] = useState<Map<string, Map<number, CellChange>>>(new Map());
   const [undoStack, setUndoStack] = useState<CellChange[]>([]);
   const [redoStack, setRedoStack] = useState<CellChange[]>([]);
-  // no UI-level grouping state; grouping is data-driven
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const baseTable = useMemo(() => {
     const tableWRows = data.derive({
@@ -49,6 +49,10 @@ export function useArqueroGrid(
   useEffect(() => {
     setFilters(initialFilters);
   }, [initialFilters]);
+
+  useEffect(() => {
+    setExpandedGroups(new Set());
+  }, [groupBy.join(",")]);
 
   const applyEdits = useCallback((inputTable: ColumnTable): ColumnTable => {
     if (staged.size === 0) return inputTable;
@@ -197,6 +201,9 @@ export function useArqueroGrid(
       c => !groupBy.includes(c)
     );
 
+    type WavgSpec = { col: string; weightCol: string; productId: string };
+    const needsWtdAvg: WavgSpec[] = [];
+
     for (const col of nonGroupColumns) {
       const arr = view.array(col) as TypedArray;
       const isNumeric = arr.every(
@@ -213,7 +220,18 @@ export function useArqueroGrid(
           : [defaultFn];
 
       for (const fn of fns) {
-        if (!VALID_AGGS.has(fn)) continue;
+        if (fn.startsWith("wavg:")) {
+          const weightCol = fn.slice(5);
+          const productId = `${col}${AGG_DELIMITER}${weightCol}${AGG_DELIMITER}wtdprod`;
+          if (!aggregateColumnIds.includes(productId)) {
+            aggregateColumnIds.push(productId);
+            rollupSpec[productId] = op.sum(`${col}_x_${weightCol}` as any);
+          }
+          needsWtdAvg.push({ col, weightCol, productId });
+          continue;
+        }
+
+        if (!(VALID_AGGS.has(fn))) continue;
 
         const id = `${col}${AGG_DELIMITER}${fn}`;
         if (aggregateColumnIds.includes(id)) continue;
@@ -246,7 +264,59 @@ export function useArqueroGrid(
       }
     }
 
-    let grouped = view.groupby(...groupBy).rollup(rollupSpec);
+    for (const { weightCol } of needsWtdAvg) {
+      const weightSumId = `${weightCol}${AGG_DELIMITER}sum`;
+      if (!aggregateColumnIds.includes(weightSumId)) {
+        aggregateColumnIds.push(weightSumId);
+        rollupSpec[weightSumId] = op.sum(weightCol);
+      }
+    }
+
+    let viewForGrouping = view;
+    if (needsWtdAvg.length > 0) {
+      const productDerives: Record<string, TableExpr> = {};
+      for (const { col, weightCol } of needsWtdAvg) {
+        const prodCol = `${col}_x_${weightCol}`;
+        productDerives[prodCol] = escape((d: RowData) => (d[col] as number) * (d[weightCol] as number));
+      }
+      viewForGrouping = view.derive(productDerives);
+    }
+
+    let grouped = viewForGrouping.groupby(...groupBy).rollup(rollupSpec);
+
+    if (needsWtdAvg.length > 0) {
+      const wavgDerives: Record<string, TableExpr> = {};
+      const intermediates = new Set<string>();
+      const userRequestedSums = new Set(
+        nonGroupColumns.flatMap(col =>
+          (aggregates?.[col] ?? []).filter((f: string) => f === "sum").map(() => `${col}${AGG_DELIMITER}sum`)
+        )
+      );
+
+      for (const { col, weightCol, productId } of needsWtdAvg) {
+        const wavgId = `${col}${AGG_DELIMITER}wavg${AGG_DELIMITER}${weightCol}`;
+        const weightSumId = `${weightCol}${AGG_DELIMITER}sum`;
+        wavgDerives[wavgId] = escape((d: RowData) => {
+          const prod = d[productId] as number;
+          const wsum = d[weightSumId] as number;
+          return wsum === 0 ? null : prod / wsum;
+        });
+        let insertAt = -1;
+        for (let i = 0; i < aggregateColumnIds.length; i++) {
+          if (aggregateColumnIds[i].split(AGG_DELIMITER)[0] === col) insertAt = i;
+        }
+        if (insertAt === -1) aggregateColumnIds.push(wavgId);
+        else aggregateColumnIds.splice(insertAt + 1, 0, wavgId);
+        intermediates.add(productId);
+        if (!userRequestedSums.has(weightSumId)) {
+          intermediates.add(weightSumId);
+        }
+      }
+      grouped = grouped.derive(wavgDerives);
+
+      const toKeep = aggregateColumnIds.filter(id => !intermediates.has(id));
+      aggregateColumnIds.splice(0, aggregateColumnIds.length, ...toKeep);
+    }
 
     const finalColumns = [...groupBy, ...aggregateColumnIds];
     grouped = grouped.select(...finalColumns);
@@ -255,6 +325,90 @@ export function useArqueroGrid(
     return grouped;
   }, [view, groupBy, columnNames, sortBy, aggregates]);
 
+  const groupKeyFor = useCallback(
+    (row: RowData) => JSON.stringify(groupBy.map(col => row[col])),
+    [groupBy]
+  );
+
+  const { expandedView, rowGroups } = useMemo(() => {
+    if (groupBy.length === 0 || expandedGroups.size === 0) {
+      const groups: RowGroup[] = [];
+      for (let i = 0; i < finalView.numRows(); i++) {
+        groups.push({ headerIndex: i, isCollapsed: true });
+      }
+      console.log("[rowGroups] all collapsed, finalView rows:", finalView.numRows(), "groups:", groups.length);
+      return { expandedView: finalView, rowGroups: groupBy.length > 0 ? groups : [] };
+    }
+
+    const finalCols = finalView.columnNames();
+    const allRows: Record<string, unknown>[] = [];
+    const groups: RowGroup[] = [];
+
+    for (let i = 0; i < finalView.numRows(); i++) {
+      const summaryRow = finalView.object(i) as RowData;
+      const key = groupKeyFor(summaryRow);
+      const isExpanded = expandedGroups.has(key);
+
+      const headerIndex = allRows.length;
+      allRows.push(summaryRow);
+
+      if (isExpanded) {
+        const filtered = view.params({ gk: groupBy.map(col => (summaryRow as any)[col]) })
+          .filter(
+            escape((d: RowData, $: any) =>
+              groupBy.every((col, idx) => d[col] === $.gk[idx])
+            )
+          );
+        const detailCount = filtered.numRows();
+        console.log("[expandedView] group", key, "headerIndex:", headerIndex, "detailRows:", detailCount);
+
+        for (let j = 0; j < detailCount; j++) {
+          const detailRow = filtered.object(j) as RowData;
+          const projected: Record<string, unknown> = {};
+          for (const col of finalCols) {
+            if (groupBy.includes(col)) {
+              projected[col] = detailRow[col];
+            } else {
+              const base = col.split(AGG_DELIMITER)[0];
+              projected[col] = detailRow[base] ?? null;
+            }
+          }
+          allRows.push(projected);
+        }
+
+        groups.push({ headerIndex, isCollapsed: false });
+      } else {
+        groups.push({ headerIndex, isCollapsed: true });
+      }
+    }
+
+    console.log("[expandedView] total rows:", allRows.length, "groups:", groups.length, "expanded:", expandedGroups.size);
+    return { expandedView: from(allRows).select(finalCols), rowGroups: groups };
+  }, [finalView, expandedGroups, view, groupBy, groupKeyFor]);
+
+  const toggleExpandGroup = useCallback(
+    (expandedViewRowIndex: number) => {
+      const row = expandedView.object(expandedViewRowIndex) as RowData;
+      if (!row) {
+        console.log("[toggleExpandGroup] no row at index", expandedViewRowIndex);
+        return;
+      }
+      const key = groupKeyFor(row);
+      console.log("[toggleExpandGroup] index:", expandedViewRowIndex, "key:", key);
+      setExpandedGroups(prev => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+          console.log("[toggleExpandGroup] collapsing, expandedGroups size:", next.size);
+        } else {
+          next.add(key);
+          console.log("[toggleExpandGroup] expanding, expandedGroups size:", next.size);
+        }
+        return next;
+      });
+    },
+    [expandedView, groupKeyFor]
+  );
 
   const columnKinds = useMemo(() => {
     const kinds: Record<string, "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid"> = {};
@@ -273,18 +427,19 @@ export function useArqueroGrid(
   const getCellContent = useCallback(
     (cell: Item): GridCell => {
       const [col, row] = cell;
-      const column = finalView.columnNames()[col];
+      const column = expandedView.columnNames()[col];
       if (!column) {
         return toGridCell(null);
       }
 
-      const value = finalView.get(column, row);
-      const kind = columnKinds[column] || "text";
+      const value = expandedView.get(column, row);
+      const baseCol = column.includes(AGG_DELIMITER) ? column.split(AGG_DELIMITER)[0] : column;
+      const kind = columnKinds[baseCol] || columnKinds[column] || "text";
 
       const returnCell = toGridCell(value, kind);
       return groupBy.length > 0 ? { ...returnCell, allowOverlay: false } : returnCell;
     },
-    [finalView, columnKinds]
+    [expandedView, columnKinds]
   );
 
   const isColumnEditable = useCallback((columnId: string): boolean => {
@@ -341,7 +496,7 @@ export function useArqueroGrid(
   );
 
 
-  const rows = useMemo(() => finalView.numRows(), [finalView]);
+  const rows = useMemo(() => expandedView.numRows(), [expandedView]);
 
   const setFilter = useCallback(
     (filter: FilterSpec) => {
@@ -440,20 +595,22 @@ export function useArqueroGrid(
     return true;
   }, [redoStack, baseTable]);
 
-  // no row-level toggleGroup anymore
-
   return {
     columns: finalView.columnNames().filter((name) => name != "__row_id").map((name) => ({
       id: name,
       title: name.includes(AGG_DELIMITER)
-        ? name.split(AGG_DELIMITER)[1]
+        ? (() => {
+            const parts = name.split(AGG_DELIMITER);
+            return parts[1] === "wavg" ? `wavg(${parts[2]})` : parts[1];
+          })()
         : name,
       width: 100,
     })) as GridColumn[],
     getCellContent,
     onCellEdited,
     rows,
-    groups: undefined,
+    rowGroups,
+    toggleExpandGroup,
     filters,
     setFilter,
     removeFilter,

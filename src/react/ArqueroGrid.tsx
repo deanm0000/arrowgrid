@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { DataEditor, type DrawHeaderCallback, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, useTheme } from "@glideapps/glide-data-grid";
+import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, useTheme } from "@glideapps/glide-data-grid";
 import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData } from "../types";
 import { useArqueroGrid } from "./useArqueroGrid";
 
@@ -23,6 +23,9 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     bounds: { x: number; y: number; width: number; height: number } | null;
   } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const subMenuRef = useRef<HTMLDivElement | null>(null);
+  const wavgItemRef = useRef<HTMLDivElement | null>(null);
+  const [weightColPicker, setWeightColPicker] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const groupHeaderScrollRef = useRef<HTMLDivElement>(null);
 
@@ -33,7 +36,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     aggregates,
   });
 
-  const NUMERIC_AGGS = ["sum", "avg", "min", "max", "count", "distinct", "mode"];
+  const NUMERIC_AGGS = ["sum", "avg", "min", "max", "count", "distinct", "mode", "wavg"];
   const NON_NUMERIC_AGGS = ["count", "distinct", "mode"];
 
   const columnTypeMap = useMemo(() => {
@@ -53,20 +56,34 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     if (groupBy.length === 0) setAggregates({});
   }, [groupBy.length]);
 
-  // Preserve original column order
-  const originalOrderRef = useRef<string[] | null>(null);
-  if (!originalOrderRef.current) {
-    originalOrderRef.current = grid.columns
-      .map(c => c.id)
-      .filter((id): id is string => Boolean(id));
-  }
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
 
-  const orderedColumns = useMemo(() => {
+  const defaultOrderedColumns = useMemo(() => {
     const groupedSet = new Set(groupBy);
     const groupedCols = grid.columns.filter(c => c.id && groupedSet.has(c.id));
     const otherCols = grid.columns.filter(c => !c.id || !groupedSet.has(c.id));
     return [...groupedCols, ...otherCols];
   }, [grid.columns, groupBy]);
+
+  const defaultColumnKey = useMemo(
+    () => defaultOrderedColumns.map(c => c.id).join(","),
+    [defaultOrderedColumns]
+  );
+
+  useEffect(() => {
+    setColumnOrder(
+      defaultOrderedColumns
+        .map(c => c.id)
+        .filter((id): id is string => Boolean(id))
+    );
+  }, [defaultColumnKey]);
+
+  const orderedColumns = useMemo(() => {
+    if (columnOrder.length === 0) return defaultOrderedColumns;
+    return columnOrder
+      .map(id => grid.columns.find(c => c.id === id))
+      .filter((c): c is typeof grid.columns[0] => Boolean(c));
+  }, [columnOrder, grid.columns, defaultOrderedColumns]);
 
 
   // Map visual column index -> underlying column index
@@ -344,6 +361,105 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     [orderedColumns, groupBy, sortBy, columnTypeMap, setGroupBy, setAggregates, setSortBy, theme]
   );
 
+  const headerRowSet = useMemo(
+    () => new Set(grid.rowGroups.map(g => g.headerIndex)),
+    [grid.rowGroups]
+  );
+
+  const aggColSpans = useMemo(() => {
+    if (groupBy.length === 0) return new Map<number, [number, number]>();
+    const spans = new Map<number, [number, number]>();
+    const baseGroups = new Map<string, number[]>();
+    orderedColumns.forEach((col, idx) => {
+      if (!col.id?.includes(AGG_DELIMITER)) return;
+      const base = col.id.split(AGG_DELIMITER)[0];
+      if (!baseGroups.has(base)) baseGroups.set(base, []);
+      baseGroups.get(base)!.push(idx);
+    });
+    for (const indices of baseGroups.values()) {
+      if (indices.length <= 1) continue;
+      spans.set(indices[0], [indices[0], indices[indices.length - 1]]);
+      for (let k = 1; k < indices.length; k++) {
+        spans.set(indices[k], [-1, -1]);
+      }
+    }
+    return spans;
+  }, [orderedColumns, groupBy]);
+
+  const rowGroupingOptions = useMemo(() => {
+    if (groupBy.length === 0 || grid.rowGroups.length === 0) return undefined;
+    return {
+      groups: grid.rowGroups as RowGroup[],
+      height: 34,
+      navigationBehavior: "skip" as const,
+    };
+  }, [grid.rowGroups, groupBy]);
+
+  const { mapper } = useRowGrouping(rowGroupingOptions, grid.rows);
+
+  const expandToggleColIndex = useMemo(() => {
+    if (groupBy.length === 0) return -1;
+    const lastGroupCol = groupBy[groupBy.length - 1];
+    return orderedColumns.findIndex(c => c.id === lastGroupCol);
+  }, [groupBy, orderedColumns]);
+
+  const collapsedRowSet = useMemo(() => {
+    const set = new Set<number>();
+    for (const g of grid.rowGroups) {
+      if (g.isCollapsed) set.add(g.headerIndex);
+    }
+    return set;
+  }, [grid.rowGroups]);
+
+  const drawCell = useCallback(
+    (args: { ctx: CanvasRenderingContext2D; cell: any; rect: Rectangle; col: number; row: number; theme: Theme }, drawContent: () => void) => {
+      const isHeaderRow = groupBy.length > 0 && headerRowSet.has(args.row);
+
+      if (!isHeaderRow) {
+        drawContent();
+        return;
+      }
+
+      const { ctx, rect, theme, cell } = args;
+      const padding = 8;
+
+      ctx.save();
+      ctx.fillStyle = theme.bgCell;
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+
+      const displayText = cell?.displayData ?? cell?.data ?? "";
+      ctx.fillStyle = theme.textDark;
+      ctx.font = `bold 13px ${theme.fontFamily}`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      ctx.fillText(String(displayText), rect.x + padding, rect.y + rect.height / 2);
+
+      if (args.col === expandToggleColIndex) {
+        const isCollapsed = collapsedRowSet.has(args.row);
+        const chevronSize = 8;
+        const cx = rect.x + rect.width - 16;
+        const cy = rect.y + rect.height / 2;
+
+        ctx.fillStyle = theme.textDark;
+        ctx.beginPath();
+        if (isCollapsed) {
+          ctx.moveTo(cx, cy - chevronSize / 2);
+          ctx.lineTo(cx + chevronSize, cy);
+          ctx.lineTo(cx, cy + chevronSize / 2);
+        } else {
+          ctx.moveTo(cx - chevronSize / 2, cy);
+          ctx.lineTo(cx + chevronSize / 2, cy);
+          ctx.lineTo(cx, cy + chevronSize);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.restore();
+    },
+    [groupBy, expandToggleColIndex, headerRowSet, collapsedRowSet]
+  );
+
   const getCellContent = useCallback(
     (cell: Item) => {
       const [visualCol, row] = cell;
@@ -355,9 +471,27 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       if (underlyingIndex == null)
         return grid.getCellContent(cell as Item);
 
+      const isDetailRow = groupBy.length > 0 && !headerRowSet.has(row);
+
+      if (isDetailRow && col.id && groupBy.includes(col.id)) {
+        return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } as any;
+      }
+
+      if (isDetailRow && col.id.includes(AGG_DELIMITER)) {
+        const spanInfo = aggColSpans.get(visualCol);
+        if (spanInfo && spanInfo[0] === -1) {
+          return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } as any;
+        }
+        const baseCell = grid.getCellContent([underlyingIndex, row] as Item);
+        if (spanInfo) {
+          return { ...baseCell, span: spanInfo, allowOverlay: false };
+        }
+        return { ...baseCell, allowOverlay: false };
+      }
+
       return grid.getCellContent([underlyingIndex, row] as Item);
     },
-    [orderedColumns, columnIndexMap, grid]
+    [orderedColumns, columnIndexMap, grid, headerRowSet, groupBy, aggColSpans]
   );
   const toggleGrouping = useCallback(
     (colName: string) => {
@@ -391,10 +525,14 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   );
 
   useEffect(() => {
-    if (!menuState) return;
+    if (!menuState) {
+      setWeightColPicker(null);
+      return;
+    }
 
     const handleClickOutside = (event: PointerEvent) => {
       if (menuRef.current?.contains(event.target as Node)) return;
+      if (subMenuRef.current?.contains(event.target as Node)) return;
       setMenuState(null);
     };
 
@@ -532,10 +670,36 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             [column.id as string]: newSize,
           }));
         }}
+        onColumnMoved={(startIndex, endIndex) => {
+          setColumnOrder(prev => {
+            const next = [...prev];
+            const [moved] = next.splice(startIndex, 1);
+            next.splice(endIndex, 0, moved);
+            return next;
+          });
+        }}
+        onColumnProposeMove={(startIndex, endIndex) => {
+          if (groupBy.length === 0) return true;
+          const boundary = groupBy.length;
+          return (startIndex < boundary) === (endIndex < boundary);
+        }}
         groupHeaderHeight={groupBy.length > 0 ? 0 : undefined}
+        rowGrouping={rowGroupingOptions}
+        rows={grid.rows}
+        drawCell={drawCell}
         drawHeader={drawHeader}
         onHeaderClicked={onHeaderClicked}
-        onCellClicked={() => setMenuState(null)}
+        onCellClicked={(cell) => {
+          setMenuState(null);
+          if (groupBy.length > 0) {
+            const [, visualRow] = cell;
+            const mapped = mapper(visualRow);
+            console.log("[onCellClicked] visualRow:", visualRow, "isGroupHeader:", mapped.isGroupHeader, "originalIndex:", mapped.originalIndex);
+            if (mapped.isGroupHeader) {
+              grid.toggleExpandGroup(mapped.originalIndex as number);
+            }
+          }
+        }}
 
       />
 
@@ -556,6 +720,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         const left = menuState.bounds ? menuState.bounds.x : 40;
 
         return (
+          <>
           <div
             ref={menuRef}
             style={{
@@ -597,6 +762,13 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                 return null;
               }
 
+              const existing = aggregates[baseColId] ?? [columnTypeMap[baseColId] === "number" ? "sum" : "distinct"];
+              const defaultFn = columnTypeMap[baseColId] === "number" ? "sum" : "distinct";
+
+              const aggList = columnTypeMap[baseColId] === "number"
+                ? NUMERIC_AGGS
+                : NON_NUMERIC_AGGS;
+
               return (
                 <>
                   <div style={{ height: "1px", background: "#eee", margin: "4px 0" }} />
@@ -605,13 +777,39 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                     Add aggregate
                   </div>
 
-                  {(columnTypeMap[baseColId] === "number"
-                    ? NUMERIC_AGGS
-                    : NON_NUMERIC_AGGS
-                  ).map(fn => {
-                    const existing = aggregates[baseColId] ?? [columnTypeMap[baseColId] === "number" ? "sum" : "distinct"];
-                    const active = existing.includes(fn);
+                  {aggList.map(fn => {
+                    if (fn === "wavg") {
+                      const activeWavgFn = existing.find((e: string) => e.startsWith("wavg:"));
+                      const activeWeightCol = activeWavgFn?.slice(5);
+                      return (
+                        <div
+                          key="wavg"
+                          ref={wavgItemRef}
+                          style={{
+                            padding: "6px 12px",
+                            cursor: "pointer",
+                            background: activeWavgFn ? "rgba(0,0,0,0.05)" : weightColPicker === baseColId ? "rgba(0,0,0,0.08)" : undefined,
+                          }}
+                          onClick={() => {
+                            if (activeWavgFn) {
+                              setAggregates(prev => {
+                                const current = prev[baseColId] ?? [defaultFn];
+                                if (current.length <= 1) return prev;
+                                const next = current.filter((f: string) => f !== activeWavgFn);
+                                return { ...prev, [baseColId]: next };
+                              });
+                              setWeightColPicker(null);
+                            } else {
+                              setWeightColPicker(weightColPicker === baseColId ? null : baseColId);
+                            }
+                          }}
+                        >
+                          {activeWavgFn ? `✓ wavg(${activeWeightCol})` : "wavg ▶"}
+                        </div>
+                      );
+                    }
 
+                    const active = existing.includes(fn);
                     return (
                       <div
                         key={fn}
@@ -624,23 +822,21 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                         }}
                         onClick={() => {
                           setAggregates(prev => {
-                            const current = prev[baseColId] ?? [columnTypeMap[baseColId] === "number" ? "sum" : "distinct"];
+                            const current = prev[baseColId] ?? [defaultFn];
                             const next = current.includes(fn)
-                              ? (current.length > 1 ? current.filter(f => f !== fn) : current)
+                              ? (current.length > 1 ? current.filter((f: string) => f !== fn) : current)
                               : [...current, fn];
 
-                            const order =
-                              columnTypeMap[baseColId] === "number"
-                                ? NUMERIC_AGGS
-                                : NON_NUMERIC_AGGS;
-
-                            const sorted = order.filter(f =>
+                            const order = aggList;
+                            const sorted = order.filter((f: string) =>
                               next.includes(f)
                             );
+                            const wavgEntries = next.filter((f: string) => f.startsWith("wavg:"));
 
                             const updated = { ...prev };
-                            if (sorted.length === 0) delete updated[baseColId];
-                            else updated[baseColId] = sorted;
+                            const final = [...sorted, ...wavgEntries];
+                            if (final.length === 0) delete updated[baseColId];
+                            else updated[baseColId] = final;
 
                             return updated;
                           });
@@ -655,7 +851,63 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
               );
             })()}
 
-          </div>
+           </div>
+
+          {weightColPicker && (() => {
+            const menuRect = menuRef.current?.getBoundingClientRect();
+            const wavgRect = wavgItemRef.current?.getBoundingClientRect();
+            const containerRect = containerRef.current?.getBoundingClientRect();
+            if (!menuRect || !wavgRect || !containerRect) return null;
+
+            const subLeft = menuRect.right - containerRect.left;
+            const subTop = wavgRect.top - containerRect.top;
+
+            const baseColId = weightColPicker;
+            const defaultFn = columnTypeMap[baseColId] === "number" ? "sum" : "distinct";
+
+            return (
+              <div
+                ref={subMenuRef}
+                style={{
+                  position: "absolute",
+                  top: subTop,
+                  left: subLeft,
+                  background: "white",
+                  border: "1px solid #ccc",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                  padding: "4px 0",
+                  zIndex: 1001,
+                  minWidth: 140,
+                }}
+              >
+                <div style={{ padding: "6px 12px", fontWeight: 600 }}>
+                  Weight column
+                </div>
+                <div style={{ height: "1px", background: "#eee", margin: "4px 0" }} />
+                {Object.entries(columnTypeMap)
+                  .filter(([k, v]) => v === "number" && !groupBy.includes(k) && k !== baseColId)
+                  .map(([weightCol]) => (
+                    <div
+                      key={weightCol}
+                      style={{ padding: "6px 12px", cursor: "pointer" }}
+                      onClick={() => {
+                        setAggregates(prev => {
+                          const current = prev[baseColId] ?? [defaultFn];
+                          const without = current.filter((f: string) => !f.startsWith("wavg:"));
+                          return { ...prev, [baseColId]: [...without, `wavg:${weightCol}`] };
+                        });
+                        setWeightColPicker(null);
+                      }}
+                    >
+                      {weightCol}
+                    </div>
+                  ))
+                }
+              </div>
+            );
+          })()}
+
+          </>
         );
       })()}
     </div>

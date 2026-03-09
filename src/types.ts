@@ -1,5 +1,5 @@
 import type { ColumnTable, Table } from "arquero";
-import type { GridColumn, GridCell, EditableGridCell } from "@glideapps/glide-data-grid";
+import type { GridColumn, GridCell, EditableGridCell, RowGroup } from "@glideapps/glide-data-grid";
 
 export const AGG_DELIMITER = "ARROWGRIDDELIMITERYOUSHOULDNTSEETHIS";
 
@@ -67,7 +67,8 @@ export interface UseArqueroGridResult {
   redo: () => boolean;
   canUndo: boolean;
   canRedo: boolean;
-  toggleGroup?: (key: string) => void;
+  rowGroups: readonly RowGroup[];
+  toggleExpandGroup: (expandedViewRowIndex: number) => void;
 }
 
 export interface UseColumnFiltersProps {
