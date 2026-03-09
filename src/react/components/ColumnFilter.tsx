@@ -1,13 +1,5 @@
 import React, { useState, useCallback } from "react";
-import type { FilterSpec } from "../../types";
-
-export interface ColumnFilterProps {
-  columnId: string;
-  currentFilter?: FilterSpec;
-  onFilterAdd: (filter: FilterSpec) => void;
-  onFilterRemove: () => void;
-  uniqueValues?: any[];
-}
+import type { FilterSpec, ColumnFilterProps } from "../../types";
 
 export function ColumnFilter({
   columnId,
@@ -20,8 +12,8 @@ export function ColumnFilter({
   const [filterOp, setFilterOp] = useState<string>(
     currentFilter?.op || "=="
   );
-  const [filterValue, setFilterValue] = useState<any>(
-    currentFilter?.value ?? ""
+  const [filterValue, setFilterValue] = useState<string | number | string[]>(
+    (currentFilter?.value as string | number | string[]) ?? ""
   );
 
   const handleApply = useCallback(() => {

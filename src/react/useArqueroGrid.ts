@@ -2,9 +2,11 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import type { ColumnTable, Table } from "arquero";
 import { table, op, from, desc as aqDesc, escape } from "arquero";
 import type { GridColumn, GridCell, Item, EditableGridCell } from "@glideapps/glide-data-grid";
-import { toGridCell, getCellKind } from "../convert/toGridCell";
+import { toGridCell, getCellKind, CellValue } from "../convert/toGridCell";
 import { fromGridCell } from "../convert/fromGridCell";
-import type { SortSpec, FilterSpec, CellChange, UseArqueroGridResult, UseArqueroGridProps } from "../types";
+import type { SortSpec, FilterSpec, CellChange, UseArqueroGridResult, UseArqueroGridProps, RowData } from "../types";
+import { Op } from "arquero/dist/types/op/op-api";
+import { TableExpr, TypedArray } from "arquero/dist/types/table/types";
 
 
 
@@ -27,7 +29,7 @@ export function useArqueroGrid(
 
   // const [baseTable, setbaseTable] = useState<ColumnTable>(data);
   const [filters, setFilters] = useState<FilterSpec[]>(initialFilters);
-  const [staged, setStaged] = useState<Map<string, Map<number, any>>>(new Map());
+  const [staged, setStaged] = useState<Map<string, Map<number, CellChange >>>(new Map());
   const [undoStack, setUndoStack] = useState<CellChange[]>([]);
   const [redoStack, setRedoStack] = useState<CellChange[]>([]);
   // no UI-level grouping state; grouping is data-driven
@@ -64,7 +66,7 @@ export function useArqueroGrid(
         editsTable,
         "__row_id"
       );
-      joined = joined.derive({ [col]: escape((d: any) => d[`${col}___edited`] ?? d[col]) })
+      joined = joined.derive({ [col]: escape((d: RowData) => d[`${col}___edited`] ?? d[col]) })
     }
 
     return joined.select(baseTable.columnNames())
@@ -73,7 +75,7 @@ export function useArqueroGrid(
   const applyFilters = useCallback((inputTable: ColumnTable): ColumnTable => {
     if (filters.length === 0) return inputTable;
 
-    const filterConditions: ((d: any) => boolean)[] = [];
+    const filterConditions: ((d: RowData) => boolean)[] = [];
 
     for (const filter of filters) {
       if (filter.expr) {
@@ -86,70 +88,70 @@ export function useArqueroGrid(
 
       switch (operator) {
         case "==":
-          filterConditions.push((d: any) => d[column] === value);
+          filterConditions.push((d: RowData) => d[column] === value);
           break;
         case "!=":
-          filterConditions.push((d: any) => d[column] !== value);
+          filterConditions.push((d: RowData) => d[column] !== value);
           break;
         case ">":
           if (otherColumn) {
-            filterConditions.push((d: any) => d[column] > d[otherColumn]);
-          } else {
-            filterConditions.push((d: any) => d[column] > value);
+            filterConditions.push((d: RowData) => (d[column] as number) > (d[otherColumn] as number));
+          } else if (value != null) {
+            filterConditions.push((d: RowData) => (d[column] as number) > (value as number));
           }
           break;
         case "<":
           if (otherColumn) {
-            filterConditions.push((d: any) => d[column] < d[otherColumn]);
-          } else {
-            filterConditions.push((d: any) => d[column] < value);
+            filterConditions.push((d: RowData) => (d[column] as number) < (d[otherColumn] as number));
+          } else if (value != null) {
+            filterConditions.push((d: RowData) => (d[column] as number) < (value as number));
           }
           break;
         case ">=":
           if (otherColumn) {
-            filterConditions.push((d: any) => d[column] >= d[otherColumn]);
-          } else {
-            filterConditions.push((d: any) => d[column] >= value);
+            filterConditions.push((d: RowData) => (d[column] as number) >= (d[otherColumn] as number));
+          } else if (value != null) {
+            filterConditions.push((d: RowData) => (d[column] as number) >= (value as number));
           }
           break;
         case "<=":
           if (otherColumn) {
-            filterConditions.push((d: any) => d[column] <= d[otherColumn]);
-          } else {
-            filterConditions.push((d: any) => d[column] <= value);
+            filterConditions.push((d: RowData) => (d[column] as number) <= (d[otherColumn] as number));
+          } else if (value != null) {
+            filterConditions.push((d: RowData) => (d[column] as number) <= (value as number));
           }
           break;
         case "contains":
           if (typeof value === "string") {
-            filterConditions.push((d: any) =>
+            filterConditions.push((d: RowData) =>
               String(d[column] ?? "").toLowerCase().includes(value.toLowerCase())
             );
           }
           break;
         case "startsWith":
           if (typeof value === "string") {
-            filterConditions.push((d: any) =>
+            filterConditions.push((d: RowData) =>
               String(d[column] ?? "").toLowerCase().startsWith(value.toLowerCase())
             );
           }
           break;
         case "endsWith":
           if (typeof value === "string") {
-            filterConditions.push((d: any) =>
+            filterConditions.push((d: RowData) =>
               String(d[column] ?? "").toLowerCase().endsWith(value.toLowerCase())
             );
           }
           break;
         case "in":
           if (Array.isArray(value)) {
-            filterConditions.push((d: any) => value.includes(d[column]));
+            filterConditions.push((d: RowData) => value.includes(d[column]));
           }
           break;
       }
     }
 
     if (filterConditions.length === 0) return inputTable;
-    const combinedFilter = (d: any) => filterConditions.every(fn => fn(d));
+    const combinedFilter = (d: RowData) => filterConditions.every(fn => fn(d));
     return inputTable.filter(combinedFilter);
   }, [filters]);
 
@@ -176,32 +178,77 @@ export function useArqueroGrid(
   const finalView = useMemo(() => {
     if (groupBy.length === 0) return view;
 
-    const groupColumn = groupBy[0];
+    const VALID_AGGS = new Set([
+      "sum",
+      "avg",
+      "min",
+      "max",
+      "count",
+      "distinct",
+      "mode",
+    ]);
 
-    // detect numeric columns (excluding group column)
-    const numericColumns = columnNames.filter(name => {
-      if (name === groupColumn) return false;
-      const arr = view.array(name);
-      return arr.every((v: any) => v == null || typeof v === "number");
-    });
+    const rollupSpec: Record<string, TableExpr> = {};
+    const aggregateColumnIds: string[] = [];
 
-    const rollupSpec: Record<string, any> = {};
-    for (const col of numericColumns) {
-      rollupSpec[col] = op.sum(col);
-    }
+    const nonGroupColumns = columnNames.filter(
+      c => !groupBy.includes(c)
+    );
 
-    let grouped = view.groupby(groupColumn).rollup(rollupSpec);
+    for (const col of nonGroupColumns) {
+      const arr = view.array(col) as TypedArray;
+      const isNumeric = arr.every(
+        (v) => typeof v === "number" || v==null
+      );
 
-    const existing = grouped.columnNames();
-    for (const col of columnNames) {
-      if (!existing.includes(col)) {
-        grouped = grouped.derive({ [col]: () => null });
+      const defaultFn = isNumeric ? "sum" : "distinct";
+      const rawFns = aggregates?.[col];
+
+      const fns = Array.isArray(rawFns)
+        ? rawFns
+        : rawFns
+        ? [rawFns]
+        : [defaultFn];
+
+      for (const fn of fns) {
+        if (!VALID_AGGS.has(fn)) continue;
+
+        const id = `${col}___${fn}`;
+        if (aggregateColumnIds.includes(id)) continue;
+
+        aggregateColumnIds.push(id);
+
+        switch (fn) {
+          case "sum":
+            rollupSpec[id] = op.sum(col);
+            break;
+          case "avg":
+            rollupSpec[id] = op.mean(col);
+            break;
+          case "min":
+            rollupSpec[id] = op.min(col);
+            break;
+          case "max":
+            rollupSpec[id] = op.max(col);
+            break;
+          case "count":
+            rollupSpec[id] = op.count();
+            break;
+          case "distinct":
+            rollupSpec[id] = op.distinct(col);
+            break;
+          case "mode":
+            rollupSpec[id] = op.mode(col);
+            break;
+        }
       }
     }
 
-    grouped = grouped.select(...columnNames);
+    let grouped = view.groupby(...groupBy).rollup(rollupSpec);
 
-    // apply sorting to grouped result
+    const finalColumns = [...groupBy, ...aggregateColumnIds];
+    grouped = grouped.select(...finalColumns);
+
     if (sortBy.length > 0) {
       const sortKeys = sortBy.map(s =>
         s.desc ? s.column : aqDesc(s.column)
@@ -210,12 +257,12 @@ export function useArqueroGrid(
     }
 
     return grouped;
-  }, [view, groupBy, columnNames, sortBy]);
+  }, [view, groupBy, columnNames, sortBy, aggregates]);
 
 
   const columnKinds = useMemo(() => {
     const kinds: Record<string, "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid"> = {};
-    const sampleObj = baseTable.object(0) as any;
+    const sampleObj = baseTable.object(0) as RowData | undefined;
 
     if (sampleObj) {
       for (const colName of columnNames) {
@@ -230,7 +277,7 @@ export function useArqueroGrid(
   const getCellContent = useCallback(
     (cell: Item): GridCell => {
       const [col, row] = cell;
-      const column = baseTable.columnNames()[col];
+      const column = finalView.columnNames()[col];
       if (!column) {
         return toGridCell(null);
       }
@@ -267,9 +314,9 @@ export function useArqueroGrid(
       }
       const viewWRows = view.derive({ __disp_row: op.row_number() })
 
-      const filtTab = viewWRows.filter(escape((d: any) => d.__disp_row == row + 1))
+      const filtTab = viewWRows.filter(escape((d: RowData) => d.__disp_row == row + 1))
 
-      const rowId = filtTab.get("__row_id", 0)
+      const rowId = filtTab.get("__row_id", 0) as number
 
 
 
@@ -286,7 +333,7 @@ export function useArqueroGrid(
       setUndoStack(prev => [...prev, {
         row: rowId,
         col: column,
-        oldVal: oldEdit
+        oldVal: (oldEdit==undefined) ? undefined :oldEdit.oldVal
       }]);
       setRedoStack([]);
 
@@ -338,7 +385,7 @@ export function useArqueroGrid(
     console.log(latestUndo)
     setUndoStack(prev => [...prev.slice(0, -1)]);
     if (latestUndo != undefined) {
-      const thisRedoVal = staged.get(latestUndo.col)?.get(latestUndo.row)
+      const thisRedoVal = staged.get(latestUndo.col)?.get(latestUndo.row)?.oldVal ?? undefined
       if (thisRedoVal != undefined) {
         setRedoStack(prev => [...prev, { row: latestUndo.row, col: latestUndo.col, oldVal: thisRedoVal }])
       };
@@ -399,9 +446,11 @@ export function useArqueroGrid(
   // no row-level toggleGroup anymore
 
   return {
-    columns: columnNames.map((name) => ({
+    columns: finalView.columnNames().filter((name)=>name!="__row_id").map((name) => ({
       id: name,
-      title: name,
+      title: name.includes("___")
+        ? name.split("___")[1]
+        : name,
       width: 100,
     })) as GridColumn[],
     getCellContent,
@@ -419,6 +468,5 @@ export function useArqueroGrid(
     redo,
     canUndo: undoStack.length > 0,
     canRedo: redoStack.length > 0,
-    toggleGroup: undefined as any,
   };
 }

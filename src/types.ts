@@ -1,5 +1,7 @@
 import type { ColumnTable, Table } from "arquero";
-import type { GridColumn } from "@glideapps/glide-data-grid";
+import type { GridColumn, GridCell, EditableGridCell } from "@glideapps/glide-data-grid";
+
+export type RowData = Record<string, string | number | boolean | Date | null>;
 
 export interface SortSpec {
   column: string;
@@ -10,16 +12,16 @@ export interface AggregateSpec {
   op: "sum" | "mean" | "avg" | "count" | "min" | "max" | "median" | "weightedAvg" | "custom";
   column?: string;
   weightColumn?: string;
-  fn?: (values: any[]) => any;
+  fn?: (values: (string | number | boolean | Date | null)[]) => string | number | boolean | Date | null;
   as?: string;
 }
 
 export interface FilterSpec {
   column?: string;
   op?: string;
-  value?: any;
+  value?: string | number | boolean | Date | null | (string | number | boolean | Date | null)[];
   otherColumn?: string;
-  expr?: (d: any) => boolean;
+  expr?: (d: RowData) => boolean;
 }
 
 export interface CellChange {
@@ -40,18 +42,18 @@ export interface UseArqueroGridProps {
   groupBy?: string[];
   sortBy?: SortSpec[];
   filters?: FilterSpec[];
-  aggregates?: Record<string, AggregateSpec>;
+  aggregates?: Record<string, string[]>;
   editable?: boolean | Record<string, boolean>;
-  onCellChange?: (column: string, row: number, oldValue: any, newValue: any) => void;
+  onCellChange?: (column: string, row: number, oldValue: string | number | boolean | Date | null, newValue: string | number | boolean | Date | null) => void;
   onDataChange?: (newTable: ColumnTable) => void;
 }
 
 export interface UseArqueroGridResult {
   columns: GridColumn[];
-  getCellContent: (cell: readonly [number, number]) => any;
-  onCellEdited: (cell: readonly [number, number], newValue: any) => void;
+  getCellContent: (cell: readonly [number, number]) => GridCell;
+  onCellEdited: (cell: readonly [number, number], newCell: EditableGridCell) => void;
   rows: number;
-  groups?: readonly (number | { readonly headerIndex: number; readonly isCollapsed: boolean; readonly subGroups?: readonly any[] })[];
+  groups?: readonly (number | { readonly headerIndex: number; readonly isCollapsed: boolean; readonly subGroups?: readonly string[] })[];
   filters: FilterSpec[];
   setFilter: (filter: FilterSpec) => void;
   removeFilter: (index: number) => void;
@@ -63,7 +65,7 @@ export interface UseArqueroGridResult {
   redo: () => boolean;
   canUndo: boolean;
   canRedo: boolean;
-  toggleGroup: (key: string) => void;
+  toggleGroup?: (key: string) => void;
 }
 
 export interface UseColumnFiltersProps {
@@ -76,7 +78,7 @@ export interface ColumnFilterProps {
   currentFilter?: FilterSpec;
   onFilterAdd: (filter: FilterSpec) => void;
   onFilterRemove: () => void;
-  uniqueValues?: any[];
+  uniqueValues?: (string | number | boolean | Date | null)[];
 }
 
 export interface GroupHeaderProps {
