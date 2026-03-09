@@ -1,16 +1,15 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import type { ColumnTable, Table } from "arquero";
-import { table, op, from, desc as aqDesc, escape } from "arquero";
+import type { ColumnTable } from "arquero";
+import { op, from, desc as aqDesc, escape } from "arquero";
 import type { GridColumn, GridCell, Item, EditableGridCell, RowGroup } from "@glideapps/glide-data-grid";
-import { toGridCell, getCellKind, CellValue } from "../convert/toGridCell";
-import { fromGridCell } from "../convert/fromGridCell";
-import { AGG_DELIMITER, type SortSpec, type FilterSpec, type CellChange, type UseArqueroGridResult, type UseArqueroGridProps, type RowData } from "../types";
-import { Op } from "arquero/dist/types/op/op-api";
+import { toGridCell, getCellKind } from "../convert/toGridCell";
+
+import { AGG_DELIMITER, type FilterSpec, type CellChange, type UseArqueroGridResult, type UseArqueroGridProps, type RowData } from "../types";
+
 import { TableExpr, TypedArray } from "arquero/dist/types/table/types";
 
 
 
-// grouping now handled via Arquero groupby + rollup
 
 export function useArqueroGrid(
   props: UseArqueroGridProps
@@ -166,10 +165,6 @@ export function useArqueroGrid(
     ));
     return inputTable.orderby(sortKeys);
   }, [sortBy]);
-
-  // grouping handled below in finalView memo
-
-
 
   const [view, columnNames] = useMemo(() => {
     let v = baseTable;
