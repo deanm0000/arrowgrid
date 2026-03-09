@@ -176,7 +176,7 @@ export function useArqueroGrid(
 
     v = applyEdits(v);
     v = applyFilters(v);
-    // v = applySort(v);
+    if (groupBy.length === 0) v = applySort(v);
 
     return [v, baseTable.columnNames().filter(n => n !== "__row_id")]
   }, [baseTable, applyEdits, applyFilters, applySort]);

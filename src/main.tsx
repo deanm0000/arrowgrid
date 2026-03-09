@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import {useState, useMemo, useCallback}  from 'react';
 import { createRoot } from 'react-dom/client';
 import { ColumnTable, from } from 'arquero';
 import { ArqueroGrid } from './react/ArqueroGrid';
@@ -16,12 +16,10 @@ const sampleData = from([
 ]);
 
 function App() {
-  // console.log(sampleData.objects())
+
   const [data, setData] = useState<ColumnTable>(sampleData);
 
   const groupBy:string[] = [];
-
-  // Sorting is now handled internally by ArqueroGrid
 
   const filters = useMemo(() => [], []);
 
@@ -36,6 +34,7 @@ function App() {
     []
   );
 
+  // These don't do anything yet
   const onDataChange = useCallback((newTable: ColumnTable) => {
     console.log('Data changed:', newTable.objects());
     setData(newTable);
