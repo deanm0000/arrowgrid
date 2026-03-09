@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { DataEditor, type DrawHeaderCallback, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, useTheme } from "@glideapps/glide-data-grid";
-import type { UseArqueroGridProps, SortSpec, RowData } from "../types";
+import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData } from "../types";
 import { useArqueroGrid } from "./useArqueroGrid";
 
 const TRISIZE = 10;
@@ -23,6 +23,8 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     bounds: { x: number; y: number; width: number; height: number } | null;
   } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const groupHeaderScrollRef = useRef<HTMLDivElement>(null);
 
   const grid = useArqueroGrid({
     ...props,
@@ -31,8 +33,8 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     aggregates,
   });
 
-  const NUMERIC_AGGS = ["sum","avg","min","max","count","distinct","mode"];
-  const NON_NUMERIC_AGGS = ["count","distinct","mode"];
+  const NUMERIC_AGGS = ["sum", "avg", "min", "max", "count", "distinct", "mode"];
+  const NON_NUMERIC_AGGS = ["count", "distinct", "mode"];
 
   const columnTypeMap = useMemo(() => {
     const map: Record<string, "number" | "string" | "other"> = {};
@@ -109,7 +111,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     theme: Theme
   ) => {
     const toggleGrouping = (colName: string) => {
-      const base = colName.includes("___") ? colName.split("___")[0] : colName;
+      const base = colName.includes(AGG_DELIMITER) ? colName.split(AGG_DELIMITER)[0] : colName;
       setGroupBy(prev => {
         if (prev.includes(base)) {
           setAggregates(a => {
@@ -191,6 +193,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         }
       },
       onClick: () => {
+        console.log(colId)
         setSortBy(prev => {
           const current = prev.find(s => s.column === colId);
           if (current && current.desc) return [];
@@ -237,9 +240,9 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
 
       const colId = col.id;
       const isGroupedMode = groupBy.length > 0;
-      const isAggregate = colId.includes("___");
-      const base = isAggregate ? colId.split("___")[0] : colId;
-      const fn = isAggregate ? colId.split("___")[1] : null;
+      const isAggregate = colId.includes(AGG_DELIMITER);
+      const base = isAggregate ? colId.split(AGG_DELIMITER)[0] : colId;
+      const fn = isAggregate ? colId.split(AGG_DELIMITER)[1] : null;
 
       ctx.save();
 
@@ -285,7 +288,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const descY = (rect.height - TRISIZE) / 2 + descYOffset;
 
       if (clickX >= sortBtnX && clickX <= sortBtnX + TRISIZE &&
-          clickY >= ascY && clickY <= ascY + TRISIZE) {
+        clickY >= ascY && clickY <= ascY + TRISIZE) {
         setSortBy(prev => {
           const current = prev.find(s => s.column === colId);
           if (current && !current.desc) return [];
@@ -295,7 +298,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       }
 
       if (clickX >= sortBtnX && clickX <= sortBtnX + TRISIZE &&
-          clickY >= descY && clickY <= descY + TRISIZE) {
+        clickY >= descY && clickY <= descY + TRISIZE) {
         setSortBy(prev => {
           const current = prev.find(s => s.column === colId);
           if (current && current.desc) return [];
@@ -308,7 +311,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const menuBtnX = rect.width - menuOffset - HEADER_BUTTON_SIZE;
       const menuBtnY = (rect.height - HEADER_BUTTON_SIZE) / 2;
       if (clickX >= menuBtnX && clickX <= menuBtnX + HEADER_BUTTON_SIZE &&
-          clickY >= menuBtnY && clickY <= menuBtnY + HEADER_BUTTON_SIZE) {
+        clickY >= menuBtnY && clickY <= menuBtnY + HEADER_BUTTON_SIZE) {
         setMenuState(prev =>
           prev?.colIndex === colIndex ? null : {
             colIndex,
@@ -358,7 +361,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   );
   const toggleGrouping = useCallback(
     (colName: string) => {
-      const base = colName.includes("___") ? colName.split("___")[0] : colName;
+      const base = colName.includes(AGG_DELIMITER) ? colName.split(AGG_DELIMITER)[0] : colName;
       setGroupBy(prev => {
         if (prev.includes(base)) {
           setAggregates(a => {
@@ -401,8 +404,97 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     };
   }, [menuState]);
 
+  useEffect(() => {
+    if (groupBy.length === 0) return;
+    if (!containerRef.current) return;
+
+    let scrollDiv: HTMLDivElement | null = null;
+
+    const syncScroll = () => {
+      if (groupHeaderScrollRef.current && scrollDiv) {
+        groupHeaderScrollRef.current.scrollLeft = scrollDiv.scrollLeft;
+      }
+    };
+
+    const observer = new MutationObserver(() => {
+      const found = containerRef.current?.querySelector<HTMLDivElement>(".dvn-scroller");
+      if (!found) return;
+      observer.disconnect();
+      scrollDiv = found;
+      scrollDiv.addEventListener("scroll", syncScroll);
+    });
+
+    observer.observe(containerRef.current, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      scrollDiv?.removeEventListener("scroll", syncScroll);
+    };
+  }, [groupBy.length]);
+
+  const groupHeaderSpans = useMemo(() => {
+    if (groupBy.length === 0) return [];
+    const groupBySet = new Set(groupBy);
+    const spans: { label: string; width: number }[] = [];
+    let groupKeySpan: { label: string; width: number } | null = null;
+    for (const col of orderedColumns) {
+      const id = col.id ?? "";
+      const w = col.id ? columnWidths[col.id] ?? 100 : 100;
+      const isAgg = id.includes(AGG_DELIMITER);
+      const base = isAgg ? id.split(AGG_DELIMITER)[0] : id;
+      if (groupBySet.has(id)) {
+        if (groupKeySpan) {
+          groupKeySpan.width += w;
+        } else {
+          groupKeySpan = { label: "", width: w };
+          spans.push(groupKeySpan);
+        }
+      } else if (isAgg) {
+        const last = spans[spans.length - 1];
+        if (last && last.label === base) {
+          last.width += w;
+        } else {
+          spans.push({ label: base, width: w });
+        }
+      } else {
+        spans.push({ label: base, width: w });
+      }
+    }
+    return spans;
+  }, [orderedColumns, groupBy, columnWidths]);
+
   return (
-    <div style={{ position: "relative" }}>
+    <div ref={containerRef} style={{ position: "relative" }}>
+      {groupBy.length > 0 && (
+        <div style={{ overflow: "hidden", height: 36 }}>
+          <div
+            ref={groupHeaderScrollRef}
+            style={{ display: "flex", overflow: "hidden", height: "100%" }}
+          >
+            {groupHeaderSpans.map((span, i) => (
+              <div
+                key={i}
+                style={{
+                  flexShrink: 0,
+                  width: span.width,
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: theme.bgHeader,
+                  color: theme.textHeader,
+                  font: theme.headerFontStyle ?? "bold 13px sans-serif",
+                  borderRight: `1px solid ${theme.borderColor ?? "#e1e1e1"}`,
+                  borderBottom: `1px solid ${theme.borderColor ?? "#e1e1e1"}`,
+                  boxSizing: "border-box",
+                }}
+              >
+                {span.label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <DataEditor
         {...grid}
         getCellContent={getCellContent}
@@ -412,31 +504,24 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             ? columnWidths[col.id] ?? 100
             : 100;
 
-          const colIdForGroup = col.id;
           const isAgg =
-            typeof colIdForGroup === "string" &&
-            colIdForGroup.includes("___");
-          const base = isAgg
-            ? colIdForGroup.split("___")[0]
-            : undefined;
+            typeof col.id === "string" &&
+            col.id.includes(AGG_DELIMITER);
 
           return {
             ...col,
             width,
-            group: groupBy.length > 0
-              ? (isAgg ? base : "")
-              : undefined,
             themeOverride: isAgg
               ? {
-                  // smaller, grey aggregate function headers
-                  baseFontStyle: "12px sans-serif",
-                  textDark: "#666",
-                }
+                // smaller, grey aggregate function headers
+                baseFontStyle: "12px sans-serif",
+                textDark: "#666",
+              }
               : isGrouped
-              ? {
+                ? {
                   baseFontStyle: "600 13px sans-serif",
                 }
-              : undefined,
+                : undefined,
           };
         })}
         onColumnResize={(column, newSize) => {
@@ -447,6 +532,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             [column.id as string]: newSize,
           }));
         }}
+        groupHeaderHeight={groupBy.length > 0 ? 0 : undefined}
         drawHeader={drawHeader}
         onHeaderClicked={onHeaderClicked}
         onCellClicked={() => setMenuState(null)}
@@ -458,8 +544,8 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         if (!col?.id) return null;
 
         const colId = col.id;
-        const baseColId = colId.includes("___")
-          ? colId.split("___")[0]
+        const baseColId = colId.includes(AGG_DELIMITER)
+          ? colId.split(AGG_DELIMITER)[0]
           : colId;
 
         const isGrouped = groupBy.includes(baseColId);
@@ -493,7 +579,18 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             >
               {isGrouped ? "Ungroup column" : "Group by column"}
             </div>
-
+            {isGrouped && groupBy.length >= 2 && (
+              <div
+                style={{ padding: "6px 12px", cursor: "pointer" }}
+                onClick={() => {
+                  setGroupBy([]);
+                  setAggregates({});
+                  setMenuState(null);
+                }}
+              >
+                Ungroup all columns
+              </div>
+            )}
             {groupBy.length > 0 && (() => {
 
               if (groupBy.includes(baseColId)) {

@@ -1,6 +1,8 @@
 import type { ColumnTable, Table } from "arquero";
 import type { GridColumn, GridCell, EditableGridCell } from "@glideapps/glide-data-grid";
 
+export const AGG_DELIMITER = "ARROWGRIDDELIMITERYOUSHOULDNTSEETHIS";
+
 export type RowData = Record<string, string | number | boolean | Date | null>;
 
 export interface SortSpec {
