@@ -459,7 +459,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   }, [grid.rowGroups]);
 
   const drawCell = useCallback(
-    (args: { ctx: CanvasRenderingContext2D; cell: any; rect: Rectangle; col: number; row: number; theme: Theme }, drawContent: () => void) => {
+    (args: { ctx: CanvasRenderingContext2D; cell: any; rect: Rectangle; col: number; row: number; theme: Theme; highlighted: boolean }, drawContent: () => void) => {
       const isHeaderRow = groupBy.length > 0 && headerRowSet.has(args.row);
 
       if (!isHeaderRow) {
@@ -500,6 +500,11 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         }
         ctx.closePath();
         ctx.fill();
+      }
+
+      if (args.highlighted) {
+        ctx.fillStyle = theme.accentLight;
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
       }
 
       ctx.restore();
