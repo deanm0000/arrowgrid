@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { FilterSpec, FilterOp } from "../../types";
 
 interface TextFilterProps {
@@ -28,8 +28,10 @@ export function TextFilter({ columnId, activeFilter, onChange }: TextFilterProps
 
   const [op, setOp] = useState<FilterOp>(initialOp);
   const [value, setValue] = useState<string>(initialValue);
+  const userTouched = useRef(false);
 
   useEffect(() => {
+    if (userTouched.current) return;
     setOp(activeFilter?.op && isTextOp(activeFilter.op) ? activeFilter.op : "contains");
     setValue(typeof activeFilter?.value === "string" ? activeFilter.value : "");
   }, [activeFilter]);
@@ -43,16 +45,19 @@ export function TextFilter({ columnId, activeFilter, onChange }: TextFilterProps
   }, [columnId, onChange]);
 
   const handleOpChange = (newOp: FilterOp) => {
+    userTouched.current = true;
     setOp(newOp);
     emit(newOp, value);
   };
 
   const handleValueChange = (newValue: string) => {
+    userTouched.current = true;
     setValue(newValue);
     emit(op, newValue);
   };
 
   const clear = () => {
+    userTouched.current = false;
     setValue("");
     onChange(null);
   };

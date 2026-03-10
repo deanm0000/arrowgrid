@@ -196,3 +196,43 @@ test('filter value column to 100 only shows rows with value 100', async ({ page,
 
   expect(errors).toEqual([]);
 });
+
+test('text filter op does not reset to Contains when input is cleared', async ({ page, context }) => {
+  const errors: string[] = [];
+  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+  page.on('pageerror', err => errors.push(err.message));
+
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/');
+  await page.getByTestId('data-grid-canvas').waitFor({ state: 'visible' });
+
+  const layout = await getLayout(page);
+  const nameCol = layout.columns['name'];
+
+  // Open ⋮ menu on name column
+  await page.mouse.click(nameCol.header.menuX, nameCol.header.menuY);
+  await page.getByText('Filter column ▶').waitFor({ state: 'visible' });
+  await page.getByText('Filter column ▶').click();
+  await page.getByText('Contains').waitFor({ state: 'visible' });
+
+  const filterMenu = page.locator('div[style*="position: absolute"]').last();
+  const select = filterMenu.locator('select');
+
+  // Switch to Regex
+  await select.selectOption('regex');
+  expect(await select.inputValue()).toBe('regex');
+
+  // Type something to activate the filter
+  const input = filterMenu.locator('input[type="text"]');
+  await input.fill('Ali');
+  await page.waitForTimeout(100);
+
+  // Backspace until empty
+  await input.fill('');
+  await page.waitForTimeout(100);
+
+  // Op must still be Regex, not reverted to Contains
+  expect(await select.inputValue()).toBe('regex');
+
+  expect(errors).toEqual([]);
+});
