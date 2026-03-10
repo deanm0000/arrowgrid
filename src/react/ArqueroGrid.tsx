@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, type DataEditorRef, useTheme } from "@glideapps/glide-data-grid";
-import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData } from "../types";
+import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type DrawCellCallback, type GridCell, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, type DataEditorRef, type TextCell, useTheme } from "@glideapps/glide-data-grid";
+import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData, type FilterSpec } from "../types";
 import { useArqueroGrid } from "./useArqueroGrid";
+import { ColumnFilterMenu } from "./components/ColumnFilterMenu";
 
 const TRISIZE = 10;
 const TRI_HPADDING = 8;
@@ -26,6 +27,9 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   const subMenuRef = useRef<HTMLDivElement | null>(null);
   const wavgItemRef = useRef<HTMLDivElement | null>(null);
   const [weightColPicker, setWeightColPicker] = useState<string | null>(null);
+  const [filterSubMenuOpen, setFilterSubMenuOpen] = useState<string | null>(null);
+  const filterItemRef = useRef<HTMLDivElement | null>(null);
+  const filterSubMenuRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const groupHeaderScrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<DataEditorRef>(null);
@@ -52,6 +56,65 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     }
     return map;
   }, [props.data]);
+
+  const distinctValueThreshold = props.distinctValueThreshold ?? 30;
+
+  const allDistinctValues = useMemo(() => {
+    const map: Record<string, (string | number | boolean | null)[]> = {};
+    for (const col of props.data.columnNames()) {
+      const vals: (string | number | boolean | null)[] = [];
+      const n = props.data.numRows();
+      for (let i = 0; i < n; i++) {
+        const v = props.data.get(col, i) as string | number | boolean | null;
+        vals.push(v);
+      }
+      const unique = [...new Set(vals)].sort((a, b) => String(a ?? "").localeCompare(String(b ?? "")));
+      map[col] = unique;
+    }
+    return map;
+  }, [props.data]);
+
+  const visibleDistinctValues = useMemo(() => {
+    const map: Record<string, (string | number | boolean | null)[]> = {};
+    for (const col of props.data.columnNames()) {
+      const otherFilters = grid.filters.filter(f => f.column !== col && f.op !== "in");
+      if (otherFilters.length === 0) {
+        map[col] = allDistinctValues[col] ?? [];
+        continue;
+      }
+      const vals: (string | number | boolean | null)[] = [];
+      const n = props.data.numRows();
+      for (let i = 0; i < n; i++) {
+        const row = props.data.object(i) as Record<string, string | number | boolean | null>;
+        const passes = otherFilters.every(f => {
+          if (!f.column || !f.op) return true;
+          const v = row[f.column];
+          switch (f.op) {
+            case ">": return typeof v === "number" && typeof f.value === "number" && v > f.value;
+            case ">=": return typeof v === "number" && typeof f.value === "number" && v >= f.value;
+            case "<": return typeof v === "number" && typeof f.value === "number" && v < f.value;
+            case "<=": return typeof v === "number" && typeof f.value === "number" && v <= f.value;
+            case "==": return v === f.value;
+            case "!=": return v !== f.value;
+            case "between": return typeof v === "number" && typeof f.value === "number" && typeof f.value2 === "number" && v >= f.value && v <= f.value2;
+            case "isNull": return v == null;
+            case "isNotNull": return v != null;
+            case "contains": return typeof f.value === "string" && String(v ?? "").toLowerCase().includes(f.value.toLowerCase());
+            case "notContains": return typeof f.value === "string" && !String(v ?? "").toLowerCase().includes(f.value.toLowerCase());
+            case "startsWith": return typeof f.value === "string" && String(v ?? "").toLowerCase().startsWith(f.value.toLowerCase());
+            case "endsWith": return typeof f.value === "string" && String(v ?? "").toLowerCase().endsWith(f.value.toLowerCase());
+            case "regex": {
+              try { return typeof f.value === "string" && new RegExp(f.value, "i").test(String(v ?? "")); } catch { return true; }
+            }
+            default: return true;
+          }
+        });
+        if (passes) vals.push(row[col]);
+      }
+      map[col] = [...new Set(vals)].sort((a, b) => String(a ?? "").localeCompare(String(b ?? "")));
+    }
+    return map;
+  }, [props.data, grid.filters, allDistinctValues]);
 
   useEffect(() => {
     if (groupBy.length === 0) setAggregates({});
@@ -458,8 +521,8 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     return set;
   }, [grid.rowGroups]);
 
-  const drawCell = useCallback(
-    (args: { ctx: CanvasRenderingContext2D; cell: any; rect: Rectangle; col: number; row: number; theme: Theme; highlighted: boolean }, drawContent: () => void) => {
+  const drawCell = useCallback<DrawCellCallback>(
+    (args, drawContent) => {
       const isHeaderRow = groupBy.length > 0 && headerRowSet.has(args.row);
 
       if (!isHeaderRow) {
@@ -474,7 +537,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       ctx.fillStyle = theme.bgCell;
       ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
-      const displayText = cell?.displayData ?? cell?.data ?? "";
+      const displayText = ("displayData" in cell ? cell.displayData : null) ?? ("data" in cell ? String(cell.data) : "") ?? "";
       ctx.fillStyle = theme.textDark;
       ctx.font = `bold 13px ${theme.fontFamily}`;
       ctx.textBaseline = "middle";
@@ -513,7 +576,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   );
 
   const getCellContent = useCallback(
-    (cell: Item) => {
+    (cell: Item): GridCell => {
       const [visualCol, row] = cell;
 
       const col = orderedColumns[visualCol];
@@ -526,13 +589,13 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const isDetailRow = groupBy.length > 0 && !headerRowSet.has(row);
 
       if (isDetailRow && col.id && groupBy.includes(col.id)) {
-        return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } as any;
+        return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } satisfies TextCell;
       }
 
       if (isDetailRow && col.id.includes(AGG_DELIMITER)) {
         const spanInfo = aggColSpans.get(visualCol);
         if (spanInfo && spanInfo[0] === -1) {
-          return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } as any;
+          return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } satisfies TextCell;
         }
         const baseCell = grid.getCellContent([underlyingIndex, row] as Item);
         if (spanInfo) {
@@ -579,12 +642,14 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   useEffect(() => {
     if (!menuState) {
       setWeightColPicker(null);
+      setFilterSubMenuOpen(null);
       return;
     }
 
     const handleClickOutside = (event: PointerEvent) => {
       if (menuRef.current?.contains(event.target as Node)) return;
       if (subMenuRef.current?.contains(event.target as Node)) return;
+      if (filterSubMenuRef.current?.contains(event.target as Node)) return;
       setMenuState(null);
     };
 
@@ -811,6 +876,14 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                 Ungroup all columns
               </div>
             )}
+            <div style={{ height: "1px", background: "#eee", margin: "4px 0" }} />
+            <div
+              ref={filterItemRef}
+              style={{ padding: "6px 12px", cursor: "pointer", background: filterSubMenuOpen === baseColId ? "rgba(0,0,0,0.05)" : undefined }}
+              onClick={() => setFilterSubMenuOpen(prev => prev === baseColId ? null : baseColId)}
+            >
+              Filter column ▶
+            </div>
             {groupBy.length > 0 && (() => {
 
               if (groupBy.includes(baseColId)) {
@@ -958,6 +1031,48 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                     </div>
                   ))
                 }
+              </div>
+            );
+          })()}
+
+          {filterSubMenuOpen && (() => {
+            const menuRect = menuRef.current?.getBoundingClientRect();
+            const filterItemRect = filterItemRef.current?.getBoundingClientRect();
+            const containerRect = containerRef.current?.getBoundingClientRect();
+            if (!menuRect || !filterItemRect || !containerRect) return null;
+
+            const subLeft = menuRect.right - containerRect.left;
+            const subTop = filterItemRect.top - containerRect.top;
+            const targetCol = filterSubMenuOpen;
+            const colType = columnTypeMap[targetCol] ?? "other";
+            const allVals = allDistinctValues[targetCol] ?? [];
+            const visibleVals = visibleDistinctValues[targetCol] ?? [];
+            const colFilters = grid.filters.filter((f: FilterSpec) => f.column === targetCol);
+
+            return (
+              <div
+                ref={filterSubMenuRef}
+                style={{
+                  position: "absolute",
+                  top: subTop,
+                  left: subLeft,
+                  background: "white",
+                  border: "1px solid #ccc",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                  zIndex: 1001,
+                }}
+              >
+                <ColumnFilterMenu
+                  columnId={targetCol}
+                  columnType={colType}
+                  allValues={allVals}
+                  visibleValues={visibleVals}
+                  distinctValueThreshold={distinctValueThreshold}
+                  filtersForColumn={colFilters}
+                  onChangeFilters={newFilters => {
+                    grid.setFiltersForColumn(targetCol, newFilters);
+                  }}
+                />
               </div>
             );
           })()}

@@ -6,7 +6,7 @@ import { toGridCell, getCellKind } from "../convert/toGridCell";
 
 import { AGG_DELIMITER, type FilterSpec, type CellChange, type UseArqueroGridResult, type UseArqueroGridProps, type RowData } from "../types";
 
-import { TableExpr, TypedArray } from "arquero/dist/types/table/types";
+import { TableExpr, TypedArray, Params } from "arquero/dist/types/table/types";
 
 
 
@@ -124,10 +124,30 @@ export function useArqueroGrid(
             filterConditions.push((d: RowData) => (d[column] as number) <= (value as number));
           }
           break;
+        case "between":
+          if (value != null && filter.value2 != null) {
+            const lo = value as number;
+            const hi = filter.value2;
+            filterConditions.push((d: RowData) => (d[column] as number) >= lo && (d[column] as number) <= hi);
+          }
+          break;
+        case "isNull":
+          filterConditions.push((d: RowData) => d[column] == null);
+          break;
+        case "isNotNull":
+          filterConditions.push((d: RowData) => d[column] != null);
+          break;
         case "contains":
           if (typeof value === "string") {
             filterConditions.push((d: RowData) =>
               String(d[column] ?? "").toLowerCase().includes(value.toLowerCase())
+            );
+          }
+          break;
+        case "notContains":
+          if (typeof value === "string") {
+            filterConditions.push((d: RowData) =>
+              !String(d[column] ?? "").toLowerCase().includes(value.toLowerCase())
             );
           }
           break;
@@ -145,6 +165,16 @@ export function useArqueroGrid(
             );
           }
           break;
+        case "regex":
+          if (typeof value === "string") {
+            try {
+              const re = new RegExp(value, "i");
+              filterConditions.push((d: RowData) => re.test(String(d[column] ?? "")));
+            } catch {
+              // invalid regex — skip
+            }
+          }
+          break;
         case "in":
           if (Array.isArray(value)) {
             filterConditions.push((d: RowData) => value.includes(d[column]));
@@ -154,7 +184,7 @@ export function useArqueroGrid(
     }
 
     if (filterConditions.length === 0) return inputTable;
-    const combinedFilter = (d: RowData) => filterConditions.every(fn => fn(d));
+    const combinedFilter = escape((d: RowData) => filterConditions.every(fn => fn(d)));
     return inputTable.filter(combinedFilter);
   }, [filters]);
 
@@ -220,7 +250,7 @@ export function useArqueroGrid(
           const productId = `${col}${AGG_DELIMITER}${weightCol}${AGG_DELIMITER}wtdprod`;
           if (!aggregateColumnIds.includes(productId)) {
             aggregateColumnIds.push(productId);
-            rollupSpec[productId] = op.sum(`${col}_x_${weightCol}` as any);
+            rollupSpec[productId] = op.sum(`${col}_x_${weightCol}`);
           }
           needsWtdAvg.push({ col, weightCol, productId });
           continue;
@@ -348,9 +378,9 @@ export function useArqueroGrid(
       allRows.push(summaryRow);
 
       if (isExpanded) {
-        const filtered = view.params({ gk: groupBy.map(col => (summaryRow as any)[col]) })
+        const filtered = view.params({ gk: groupBy.map(col => summaryRow[col]) })
           .filter(
-            escape((d: RowData, $: any) =>
+            escape((d: RowData, $: Params) =>
               groupBy.every((col, idx) => d[col] === $.gk[idx])
             )
           );
@@ -500,6 +530,16 @@ export function useArqueroGrid(
     []
   );
 
+  const setFiltersForColumn = useCallback(
+    (column: string, newFilters: FilterSpec[]) => {
+      setFilters(prev => [
+        ...prev.filter(f => f.column !== column),
+        ...newFilters,
+      ]);
+    },
+    []
+  );
+
   const removeFilter = useCallback(
     (index: number) => {
       setFilters(prev => prev.filter((_, i) => i !== index));
@@ -608,6 +648,7 @@ export function useArqueroGrid(
     toggleExpandGroup,
     filters,
     setFilter,
+    setFiltersForColumn,
     removeFilter,
     clearFilters,
     stagedCount: Array.from(staged.values()).reduce((sum, r) => sum + Object.keys(r).length, 0),

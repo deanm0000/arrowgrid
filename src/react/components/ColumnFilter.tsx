@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import type { FilterSpec, ColumnFilterProps } from "../../types";
+import type { FilterSpec, FilterOp, ColumnFilterProps } from "../../types";
 
 export function ColumnFilter({
   columnId,
@@ -9,8 +9,8 @@ export function ColumnFilter({
   uniqueValues = [],
 }: ColumnFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [filterOp, setFilterOp] = useState<string>(
-    currentFilter?.op || "=="
+  const [filterOp, setFilterOp] = useState<FilterOp>(
+    currentFilter?.op ?? "=="
   );
   const [filterValue, setFilterValue] = useState<string | number | string[]>(
     (currentFilter?.value as string | number | string[]) ?? ""
@@ -49,7 +49,7 @@ export function ColumnFilter({
         <div className="filter-dropdown">
           <select
             value={filterOp}
-            onChange={(e) => setFilterOp(e.target.value)}
+            onChange={(e) => setFilterOp(e.target.value as FilterOp)}
           >
             <option value="==">Equals</option>
             <option value="!=">Not equals</option>

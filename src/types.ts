@@ -18,10 +18,28 @@ export interface AggregateSpec {
   as?: string;
 }
 
+export type FilterOp =
+  | "=="
+  | "!="
+  | ">"
+  | ">="
+  | "<"
+  | "<="
+  | "between"
+  | "isNull"
+  | "isNotNull"
+  | "contains"
+  | "notContains"
+  | "startsWith"
+  | "endsWith"
+  | "regex"
+  | "in";
+
 export interface FilterSpec {
   column?: string;
-  op?: string;
+  op?: FilterOp;
   value?: string | number | boolean | Date | null | (string | number | boolean | Date | null)[];
+  value2?: number | null;
   otherColumn?: string;
   expr?: (d: RowData) => boolean;
 }
@@ -46,6 +64,7 @@ export interface UseArqueroGridProps {
   filters?: FilterSpec[];
   aggregates?: Record<string, string[]>;
   editable?: boolean | Record<string, boolean>;
+  distinctValueThreshold?: number;
   onCellChange?: (column: string, row: number, oldValue: string | number | boolean | Date | null, newValue: string | number | boolean | Date | null) => void;
   onDataChange?: (newTable: ColumnTable) => void;
 }
@@ -58,6 +77,7 @@ export interface UseArqueroGridResult {
   groups?: readonly (number | { readonly headerIndex: number; readonly isCollapsed: boolean; readonly subGroups?: readonly string[] })[];
   filters: FilterSpec[];
   setFilter: (filter: FilterSpec) => void;
+  setFiltersForColumn: (column: string, newFilters: FilterSpec[]) => void;
   removeFilter: (index: number) => void;
   clearFilters: () => void;
   stagedCount: number;

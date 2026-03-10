@@ -1,5 +1,6 @@
 {
   "name": "arrowgrid",
+  "type": "module",
   "version": "1.0.0",
   "description": "TypeScript library combining glide-data-grid with arquero for grouping, sorting, and aggregation",
   "main": "dist/index.js",
@@ -14,6 +15,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "vite",
+    "lint": "eslint src",
     "test": "playwright test"
   },
   "keywords": [
@@ -34,7 +36,10 @@
     "@playwright/test": "^1.58.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^9.39.4",
     "rimraf": "^6.1.3",
     "typescript": "^5.9.3",
     "vite": "^6.4.1"

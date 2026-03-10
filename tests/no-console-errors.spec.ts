@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import { sampleRows } from '../src/sampleData';
 
 const SAMPLE_DATA = sampleRows.map(row =>
@@ -33,7 +33,7 @@ async function getLayout(page: Page): Promise<GridLayout> {
   return JSON.parse(json);
 }
 
-async function copyColumn(page: Page, col: ColumnLayout, rows: GridLayout['rows'], context: any): Promise<string[]> {
+async function copyColumn(page: Page, col: ColumnLayout, rows: GridLayout['rows'], context: BrowserContext): Promise<string[]> {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.mouse.click(col.centerX, rows[0].centerY);
   await page.keyboard.down('Shift');
@@ -60,7 +60,7 @@ function isSortedDesc(values: string[]): boolean {
   return parsed.every((v, i) => i === 0 || parsed[i - 1] >= v);
 }
 
-async function testSortForColumn(page: Page, col: ColumnLayout, colId: string, rows: GridLayout['rows'], context: any, skipColIds: Set<string> = new Set()) {
+async function testSortForColumn(page: Page, col: ColumnLayout, colId: string, rows: GridLayout['rows'], context: BrowserContext, skipColIds: Set<string> = new Set()) {
   if (skipColIds.has(colId)) return;
   const preSort = await copyColumn(page, col, rows, context);
 
@@ -148,5 +148,51 @@ test('copy full data range matches source data', async ({ page, context }) => {
   const parsed = clipboardText.split('\n').map(row => row.split('\t'));
 
   expect(parsed).toEqual(SAMPLE_DATA);
+  expect(errors).toEqual([]);
+});
+
+test('filter value column to 100 only shows rows with value 100', async ({ page, context }) => {
+  const errors: string[] = [];
+  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+  page.on('pageerror', err => errors.push(err.message));
+
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/');
+  await page.getByTestId('data-grid-canvas').waitFor({ state: 'visible' });
+
+  const layout = await getLayout(page);
+  const valueCol = layout.columns['value'];
+
+  // Open ⋮ menu on value column
+  await page.mouse.click(valueCol.header.menuX, valueCol.header.menuY);
+  await page.getByText('Filter column ▶').waitFor({ state: 'visible' });
+  await page.getByText('Filter column ▶').click();
+
+  // Wait for filter submenu to appear
+  await page.getByText('Select all').waitFor({ state: 'visible' });
+
+  const filterMenu = page.locator('div[style*="position: absolute"]').last();
+
+  // Uncheck Select all to deselect everything (grid now shows 0 rows)
+  await filterMenu.getByText('Select all').click();
+  await page.waitForTimeout(100);
+
+  // Check only the 100 checkbox (grid now shows only rows with value=100)
+  await filterMenu.locator('span', { hasText: /^100$/ }).click();
+  await page.waitForTimeout(200);
+
+  const layoutWith100 = await getLayout(page);
+  const valueColWith100 = layoutWith100.columns['value'];
+  const valuesWith100 = await copyColumn(page, valueColWith100, layoutWith100.rows, context);
+  expect(valuesWith100.every(v => v === '100')).toBe(true);
+  expect(valuesWith100.length).toBeGreaterThan(0);
+
+  // Now uncheck 100 (grid shows 0 rows again, no layout rows to iterate)
+  await filterMenu.locator('span', { hasText: /^100$/ }).click();
+  await page.waitForTimeout(200);
+
+  const layoutEmpty = await getLayout(page);
+  expect(layoutEmpty.rows.length).toBe(0);
+
   expect(errors).toEqual([]);
 });

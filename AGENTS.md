@@ -10,6 +10,12 @@ We want a React component that accepts an arquero ColumnTable and outputs a grid
 
 When engaged with a to-do list, complete the whole to-do list before returning to the user. Never prompt user to proceed, just proceed.
 
+## Commands
+
+- Lint: `npm run lint`
+- Type-check: `npx tsc --noEmit`
+- Test: `npm test` (requires `vite dev` running on port 5173)
+
 # ArrowGrid Architecture
 
 This document is written for LLMs starting with zero context. It explains how the system is structured, how data flows, and—critically—establishes precise terminology to avoid confusion between Arquero row grouping and Glide column grouping.
