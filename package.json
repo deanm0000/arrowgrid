@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "vite",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "playwright test"
   },
   "keywords": [
     "glide-data-grid",
@@ -31,6 +31,7 @@
     "react": "^19.2.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",

@@ -161,7 +161,7 @@ export function useArqueroGrid(
   const applySort = useCallback((inputTable: ColumnTable): ColumnTable => {
     if (sortBy.length === 0) return inputTable;
     const sortKeys = sortBy.map((s) => (
-      s.desc ? s.column : aqDesc(s.column)
+      s.desc ? aqDesc(s.column) : s.column
     ));
     return inputTable.orderby(sortKeys);
   }, [sortBy]);

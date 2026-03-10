@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, useTheme } from "@glideapps/glide-data-grid";
+import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, type DataEditorRef, useTheme } from "@glideapps/glide-data-grid";
 import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData } from "../types";
 import { useArqueroGrid } from "./useArqueroGrid";
 
@@ -28,6 +28,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   const [weightColPicker, setWeightColPicker] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const groupHeaderScrollRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<DataEditorRef>(null);
 
   const grid = useArqueroGrid({
     ...props,
@@ -85,6 +86,52 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       .filter((c): c is typeof grid.columns[0] => Boolean(c));
   }, [columnOrder, grid.columns, defaultOrderedColumns]);
 
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.key.toLowerCase() === 'd' && e.ctrlKey && e.shiftKey && e.altKey)) return;
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      const numCols = orderedColumns.length;
+      const numRows = grid.rows;
+
+      const columns: Record<string, {
+        centerX: number;
+        header: { centerY: number; menuX: number; menuY: number; ascX: number; ascY: number; descX: number; descY: number };
+      }> = {};
+
+      for (let c = 0; c < numCols; c++) {
+        const colId = orderedColumns[c]?.id ?? String(c);
+        const headerBounds = editor.getBounds(c, -1);
+        if (!headerBounds) continue;
+
+        const colCenterX = headerBounds.x + headerBounds.width / 2;
+        const menuX = headerBounds.x + headerBounds.width - (8 + TRISIZE + HEADER_BUTTON_SPACING) - HEADER_BUTTON_SIZE / 2;
+        const menuY = headerBounds.y + headerBounds.height / 2;
+        const sortX = headerBounds.x + headerBounds.width - 8 - TRISIZE / 2;
+        const ascY = headerBounds.y + (headerBounds.height - TRISIZE) / 2 + (-(TRISIZE / 2 + TRI_VPADDING) / 2) + TRISIZE / 2;
+        const descY = headerBounds.y + (headerBounds.height - TRISIZE) / 2 + ((TRISIZE / 2 + TRI_VPADDING) / 2) + TRISIZE / 2;
+
+        columns[colId] = {
+          centerX: colCenterX,
+          header: { centerY: menuY, menuX, menuY, ascX: sortX, ascY, descX: sortX, descY },
+        };
+      }
+
+      const rows: { centerY: number }[] = [];
+      for (let r = 0; r < numRows; r++) {
+        const bounds = editor.getBounds(0, r);
+        if (!bounds) continue;
+        rows.push({ centerY: bounds.y + bounds.height / 2 });
+      }
+
+      console.log('__ARROWGRID_LAYOUT__', JSON.stringify({ columns, rows }));
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [orderedColumns, grid.rows]);
 
   // Map visual column index -> underlying column index
   const columnIndexMap = useMemo(() => {
@@ -634,6 +681,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         </div>
       )}
       <DataEditor
+        ref={editorRef}
         {...grid}
         getCellContent={getCellContent}
         columns={orderedColumns.map(col => {
@@ -687,16 +735,18 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         rowGrouping={rowGroupingOptions}
         rows={grid.rows}
         drawCell={drawCell}
+        getCellsForSelection={true}
         drawHeader={drawHeader}
         onHeaderClicked={onHeaderClicked}
-        onCellClicked={(cell) => {
+        onCellClicked={(cell, event) => {
           setMenuState(null);
           if (groupBy.length > 0) {
-            const [, visualRow] = cell;
+            const [visualCol, visualRow] = cell;
             const mapped = mapper(visualRow);
-            console.log("[onCellClicked] visualRow:", visualRow, "isGroupHeader:", mapped.isGroupHeader, "originalIndex:", mapped.originalIndex);
-            if (mapped.isGroupHeader) {
-              grid.toggleExpandGroup(mapped.originalIndex as number);
+            if (mapped.isGroupHeader && visualCol === expandToggleColIndex) {
+              if (event.localEventX >= event.bounds.width - 24) {
+                grid.toggleExpandGroup(mapped.originalIndex as number);
+              }
             }
           }
         }}
