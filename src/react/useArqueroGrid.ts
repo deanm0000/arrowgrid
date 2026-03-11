@@ -465,8 +465,12 @@ export function useArqueroGrid(
       const aggFn = column.includes(AGG_DELIMITER) ? column.split(AGG_DELIMITER)[1] : null;
       const NUMERIC_AGG_FNS = new Set(["sum", "avg", "mean", "count", "distinct", "min", "max"]);
       const baseKind = columnKinds[baseCol] || columnKinds[column] || "text";
-      const kind = aggFn && NUMERIC_AGG_FNS.has(aggFn) ? "number" : baseKind;
-      const fmt: ColumnFormat | undefined = columnFormats[baseCol];
+
+      const isDetailRow = aggFn && value !== null && value !== undefined && typeof value !== "number";
+      const kind = isDetailRow ? baseKind : (aggFn && NUMERIC_AGG_FNS.has(aggFn) ? "number" : baseKind);
+      const fmt: ColumnFormat | undefined = isDetailRow
+        ? columnFormats[baseCol]
+        : columnFormats[column] ?? columnFormats[baseCol];
 
       const returnCell = toGridCell(value, kind, fmt, testCopyMode);
       return groupBy.length > 0 ? { ...returnCell, allowOverlay: false } : returnCell;
