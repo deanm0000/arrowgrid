@@ -4,7 +4,7 @@ import { op, from, desc as aqDesc, escape } from "arquero";
 import type { GridColumn, GridCell, Item, EditableGridCell, RowGroup } from "@glideapps/glide-data-grid";
 import { toGridCell, getCellKind } from "../convert/toGridCell";
 
-import { AGG_DELIMITER, type FilterSpec, type CellChange, type UseArqueroGridResult, type UseArqueroGridProps, type RowData } from "../types";
+import { AGG_DELIMITER, type FilterSpec, type CellChange, type UseArqueroGridResult, type UseArqueroGridProps, type RowData, type ColumnFormat } from "../types";
 
 import { TableExpr, TypedArray, Params } from "arquero/dist/types/table/types";
 
@@ -21,6 +21,8 @@ export function useArqueroGrid(
     filters: initialFilters = [],
     aggregates = {},
     editable,
+    columnFormats = {},
+    testCopyMode = false,
     onCellChange,
     onDataChange,
   } = props;
@@ -190,6 +192,7 @@ export function useArqueroGrid(
 
   const applySort = useCallback((inputTable: ColumnTable): ColumnTable => {
     if (sortBy.length === 0) return inputTable;
+    console.log(sortBy)
     const sortKeys = sortBy.map((s) => (
       s.desc ? aqDesc(s.column) : s.column
     ));
@@ -459,12 +462,16 @@ export function useArqueroGrid(
 
       const value = expandedView.get(column, row);
       const baseCol = column.includes(AGG_DELIMITER) ? column.split(AGG_DELIMITER)[0] : column;
-      const kind = columnKinds[baseCol] || columnKinds[column] || "text";
+      const aggFn = column.includes(AGG_DELIMITER) ? column.split(AGG_DELIMITER)[1] : null;
+      const NUMERIC_AGG_FNS = new Set(["sum", "avg", "mean", "count", "distinct", "min", "max"]);
+      const baseKind = columnKinds[baseCol] || columnKinds[column] || "text";
+      const kind = aggFn && NUMERIC_AGG_FNS.has(aggFn) ? "number" : baseKind;
+      const fmt: ColumnFormat | undefined = columnFormats[baseCol];
 
-      const returnCell = toGridCell(value, kind);
+      const returnCell = toGridCell(value, kind, fmt, testCopyMode);
       return groupBy.length > 0 ? { ...returnCell, allowOverlay: false } : returnCell;
     },
-    [expandedView, columnKinds]
+    [expandedView, columnKinds, columnFormats, testCopyMode]
   );
 
   const isColumnEditable = useCallback((columnId: string): boolean => {

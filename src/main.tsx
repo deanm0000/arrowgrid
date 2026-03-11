@@ -7,6 +7,7 @@ import '@glideapps/glide-data-grid/dist/index.css';
 
 const sampleData = from(sampleRows);
 
+
 function App() {
 
   const [data, setData] = useState<ColumnTable>(sampleData);

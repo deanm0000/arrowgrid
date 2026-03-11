@@ -1,8 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type DrawCellCallback, type GridCell, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, type DataEditorRef, type TextCell, useTheme } from "@glideapps/glide-data-grid";
-import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData, type FilterSpec } from "../types";
+import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData, type FilterSpec, type ColumnFormat } from "../types";
 import { useArqueroGrid } from "./useArqueroGrid";
 import { ColumnFilterMenu } from "./components/ColumnFilterMenu";
+import { ValueFormatMenu } from "./components/ValueFormatMenu";
+
 
 const TRISIZE = 10;
 const TRI_HPADDING = 8;
@@ -15,6 +17,7 @@ const HEADER_BUTTON_SPACING = 6;
 
 export function ArqueroGrid(props: UseArqueroGridProps) {
   const theme = useTheme();
+  const testCopyMode = useMemo(() => new URLSearchParams(window.location.search).has("testcopy"), []);
   const [sortBy, setSortBy] = useState<SortSpec[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
   const [aggregates, setAggregates] = useState<Record<string, string[]>>({});
@@ -30,6 +33,21 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   const [filterSubMenuOpen, setFilterSubMenuOpen] = useState<string | null>(null);
   const filterItemRef = useRef<HTMLDivElement | null>(null);
   const filterSubMenuRef = useRef<HTMLDivElement | null>(null);
+  const [formatSubMenuOpen, setFormatSubMenuOpen] = useState<string | null>(null);
+  const formatItemRef = useRef<HTMLDivElement | null>(null);
+  const formatSubMenuRef = useRef<HTMLDivElement | null>(null);
+  const [columnFormats, setColumnFormats] = useState<Record<string, ColumnFormat>>(() => {
+    const initial: Record<string, ColumnFormat> = { ...(props.columnFormats ?? {}) };
+    const first = props.data.object(0) as RowData | undefined;
+    if (first) {
+      for (const [key, val] of Object.entries(first)) {
+        if (val instanceof Date && !initial[key]) {
+          initial[key] = { kind: "date", format: "mm-dd-yyyy-hh-mm" };
+        }
+      }
+    }
+    return initial;
+  });
   const containerRef = useRef<HTMLDivElement>(null);
   const groupHeaderScrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<DataEditorRef>(null);
@@ -39,18 +57,22 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     sortBy,
     groupBy,
     aggregates,
+    columnFormats,
+    testCopyMode,
   });
 
   const NUMERIC_AGGS = ["sum", "avg", "min", "max", "count", "distinct", "mode", "wavg"];
   const NON_NUMERIC_AGGS = ["count", "distinct", "mode"];
 
   const columnTypeMap = useMemo(() => {
-    const map: Record<string, "number" | "string" | "other"> = {};
+    const map: Record<string, "number" | "string" | "date" | "boolean" | "other"> = {};
     const first = props.data.object(0) as RowData | undefined;
     if (!first) return map;
     for (const key of Object.keys(first)) {
       const v = first[key];
       if (typeof v === "number") map[key] = "number";
+      else if (typeof v === "boolean") map[key] = "boolean";
+      else if (v instanceof Date) map[key] = "date";
       else if (typeof v === "string") map[key] = "string";
       else map[key] = "other";
     }
@@ -231,7 +253,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     orderedColumns: typeof grid.columns,
     groupBy: string[],
     sortBy: SortSpec[],
-    columnTypeMap: Record<string, "number" | "string" | "other">,
+    columnTypeMap: Record<string, "number" | "string" | "date" | "boolean" | "other">,
     setGroupBy: React.Dispatch<React.SetStateAction<string[]>>,
     setAggregates: React.Dispatch<React.SetStateAction<Record<string, string[]>>>,
     setSortBy: React.Dispatch<React.SetStateAction<SortSpec[]>>,
@@ -526,6 +548,36 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const isHeaderRow = groupBy.length > 0 && headerRowSet.has(args.row);
 
       if (!isHeaderRow) {
+        const col = orderedColumns[args.col];
+        const baseColId = col?.id
+          ? (col.id.includes(AGG_DELIMITER) ? col.id.split(AGG_DELIMITER)[0] : col.id)
+          : null;
+        const fmt = baseColId ? columnFormats[baseColId] : undefined;
+        const isAccounting = fmt?.kind === "number" && fmt.format.type === "accounting";
+        if (isAccounting) {
+          drawContent();
+          const cellData = "displayData" in args.cell ? args.cell.displayData : ("data" in args.cell ? String(args.cell.data) : "");
+          const numStr = typeof cellData === "string" ? cellData : "";
+          const isNeg = numStr.startsWith("(");
+          const { ctx, rect, theme } = args;
+          const padding = 8;
+          ctx.save();
+          ctx.fillStyle = theme.bgCell;
+          ctx.fillRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+          if (args.highlighted) {
+            ctx.fillStyle = theme.accentLight;
+            ctx.fillRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
+          }
+          ctx.fillStyle = isNeg ? "#c00" : theme.textDark;
+          ctx.font = theme.baseFontStyle ?? "13px sans-serif";
+          ctx.textBaseline = "middle";
+          ctx.textAlign = "left";
+          ctx.fillText("$", rect.x + padding, rect.y + rect.height / 2);
+          ctx.textAlign = "right";
+          ctx.fillText(numStr, rect.x + rect.width - padding, rect.y + rect.height / 2);
+          ctx.restore();
+          return;
+        }
         drawContent();
         return;
       }
@@ -533,16 +585,35 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const { ctx, rect, theme, cell } = args;
       const padding = 8;
 
+      const hCol = orderedColumns[args.col];
+      const hBaseColId = hCol?.id
+        ? (hCol.id.includes(AGG_DELIMITER) ? hCol.id.split(AGG_DELIMITER)[0] : hCol.id)
+        : null;
+      const hFmt = hBaseColId ? columnFormats[hBaseColId] : undefined;
+      const hIsAccounting = hFmt?.kind === "number" && hFmt.format.type === "accounting";
+
+      const displayText = ("displayData" in cell ? cell.displayData : null) ?? ("data" in cell ? String(cell.data) : "") ?? "";
+
       ctx.save();
       ctx.fillStyle = theme.bgCell;
       ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
-      const displayText = ("displayData" in cell ? cell.displayData : null) ?? ("data" in cell ? String(cell.data) : "") ?? "";
       ctx.fillStyle = theme.textDark;
       ctx.font = `bold 13px ${theme.fontFamily}`;
       ctx.textBaseline = "middle";
-      ctx.textAlign = "left";
-      ctx.fillText(String(displayText), rect.x + padding, rect.y + rect.height / 2);
+
+      if (hIsAccounting) {
+        const numStr = String(displayText);
+        const isNeg = numStr.startsWith("(");
+        ctx.fillStyle = isNeg ? "#c00" : theme.textDark;
+        ctx.textAlign = "left";
+        ctx.fillText("$", rect.x + padding, rect.y + rect.height / 2);
+        ctx.textAlign = "right";
+        ctx.fillText(numStr, rect.x + rect.width - padding, rect.y + rect.height / 2);
+      } else {
+        ctx.textAlign = "left";
+        ctx.fillText(String(displayText), rect.x + padding, rect.y + rect.height / 2);
+      }
 
       if (args.col === expandToggleColIndex) {
         const isCollapsed = collapsedRowSet.has(args.row);
@@ -570,9 +641,19 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
       }
 
+      const borderColor = theme.borderColor ?? "#e6e6e6";
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(rect.x + rect.width - 0.5, rect.y);
+      ctx.lineTo(rect.x + rect.width - 0.5, rect.y + rect.height);
+      ctx.moveTo(rect.x, rect.y + rect.height - 0.5);
+      ctx.lineTo(rect.x + rect.width, rect.y + rect.height - 0.5);
+      ctx.stroke();
+
       ctx.restore();
     },
-    [groupBy, expandToggleColIndex, headerRowSet, collapsedRowSet]
+    [groupBy, expandToggleColIndex, headerRowSet, collapsedRowSet, orderedColumns, columnFormats]
   );
 
   const getCellContent = useCallback(
@@ -643,6 +724,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     if (!menuState) {
       setWeightColPicker(null);
       setFilterSubMenuOpen(null);
+      setFormatSubMenuOpen(null);
       return;
     }
 
@@ -650,6 +732,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       if (menuRef.current?.contains(event.target as Node)) return;
       if (subMenuRef.current?.contains(event.target as Node)) return;
       if (filterSubMenuRef.current?.contains(event.target as Node)) return;
+      if (formatSubMenuRef.current?.contains(event.target as Node)) return;
       setMenuState(null);
     };
 
@@ -880,10 +963,27 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             <div
               ref={filterItemRef}
               style={{ padding: "6px 12px", cursor: "pointer", background: filterSubMenuOpen === baseColId ? "rgba(0,0,0,0.05)" : undefined }}
-              onClick={() => setFilterSubMenuOpen(prev => prev === baseColId ? null : baseColId)}
+              onClick={() => { setFilterSubMenuOpen(prev => prev === baseColId ? null : baseColId); setFormatSubMenuOpen(null); }}
             >
               Filter column ▶
             </div>
+            {(() => {
+              const kind = columnTypeMap[baseColId];
+              const isAggCol = colId.includes(AGG_DELIMITER);
+              const aggFn = isAggCol ? colId.split(AGG_DELIMITER)[1] : null;
+              const NUMERIC_AGG_FNS = new Set(["sum", "avg", "count", "distinct", "min", "max", "wavg"]);
+              const effectiveKind = aggFn && NUMERIC_AGG_FNS.has(aggFn) ? "number" : kind;
+              if (effectiveKind !== "number" && effectiveKind !== "date" && effectiveKind !== "boolean") return null;
+              return (
+                <div
+                  ref={formatItemRef}
+                  style={{ padding: "6px 12px", cursor: "pointer", background: formatSubMenuOpen === baseColId ? "rgba(0,0,0,0.05)" : undefined }}
+                  onClick={() => { setFormatSubMenuOpen(prev => prev === baseColId ? null : baseColId); setFilterSubMenuOpen(null); }}
+                >
+                  Value format ▶
+                </div>
+              );
+            })()}
             {groupBy.length > 0 && (() => {
 
               if (groupBy.includes(baseColId)) {
@@ -1044,7 +1144,9 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             const subLeft = menuRect.right - containerRect.left;
             const subTop = filterItemRect.top - containerRect.top;
             const targetCol = filterSubMenuOpen;
-            const colType = columnTypeMap[targetCol] ?? "other";
+            const rawType = columnTypeMap[targetCol] ?? "other";
+            const colType: "number" | "string" | "other" =
+              rawType === "number" ? "number" : rawType === "string" ? "string" : "other";
             const allVals = allDistinctValues[targetCol] ?? [];
             const visibleVals = visibleDistinctValues[targetCol] ?? [];
             const colFilters = grid.filters.filter((f: FilterSpec) => f.column === targetCol);
@@ -1071,6 +1173,57 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                   filtersForColumn={colFilters}
                   onChangeFilters={newFilters => {
                     grid.setFiltersForColumn(targetCol, newFilters);
+                  }}
+                />
+              </div>
+            );
+          })()}
+
+          {formatSubMenuOpen && (() => {
+            const menuRect = menuRef.current?.getBoundingClientRect();
+            const formatItemRect = formatItemRef.current?.getBoundingClientRect();
+            const containerRect = containerRef.current?.getBoundingClientRect();
+            if (!menuRect || !formatItemRect || !containerRect) return null;
+
+            const subLeft = menuRect.right - containerRect.left;
+            const subTop = formatItemRect.top - containerRect.top;
+            const targetCol = formatSubMenuOpen;
+            const openColId = orderedColumns[menuState.colIndex]?.id ?? "";
+            const openAggFn = openColId.includes(AGG_DELIMITER) ? openColId.split(AGG_DELIMITER)[1] : null;
+            const NUMERIC_AGG_FNS_FM = new Set(["sum", "avg", "count", "distinct", "min", "max", "wavg"]);
+            const kind = columnTypeMap[targetCol] ?? "other";
+            const effectiveKind = openAggFn && NUMERIC_AGG_FNS_FM.has(openAggFn) ? "number" : kind;
+            const colKind: "number" | "date" | "boolean" | "other" =
+              effectiveKind === "number" || effectiveKind === "date" || effectiveKind === "boolean" ? effectiveKind : "other";
+
+            return (
+              <div
+                ref={formatSubMenuRef}
+                style={{
+                  position: "absolute",
+                  top: subTop,
+                  left: subLeft,
+                  background: "white",
+                  border: "1px solid #ccc",
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                  zIndex: 1001,
+                }}
+              >
+                <ValueFormatMenu
+                  columnId={targetCol}
+                  columnKind={colKind}
+                  activeFormat={columnFormats[targetCol]}
+                  onChange={fmt => {
+                    setColumnFormats(prev => {
+                      const next = { ...prev };
+                      if (fmt === null) {
+                        delete next[targetCol];
+                      } else {
+                        next[targetCol] = fmt;
+                      }
+                      props.onColumnFormatsChange?.(next);
+                      return next;
+                    });
                   }}
                 />
               </div>

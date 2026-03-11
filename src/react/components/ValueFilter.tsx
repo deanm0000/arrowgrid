@@ -56,7 +56,7 @@ export function ValueFilter({ columnId, allValues, visibleValues, activeFilter, 
       const next = new Set(prev);
       if (next.has(val)) next.delete(val);
       else next.add(val);
-      emit(next);
+      queueMicrotask(() => emit(next));
       return next;
     });
   }, [emit]);
@@ -69,7 +69,7 @@ export function ValueFilter({ columnId, allValues, visibleValues, activeFilter, 
       } else {
         visibleStrings.forEach(v => next.add(v));
       }
-      emit(next);
+      queueMicrotask(() => emit(next));
       return next;
     });
   }, [visibleStrings, emit]);

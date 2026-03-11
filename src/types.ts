@@ -57,6 +57,23 @@ export interface BulkChange {
 
 export type Change = CellChange | BulkChange;
 
+export type NumberFormat =
+  | { type: "general" }
+  | { type: "decimal"; decimals: number }
+  | { type: "currency"; decimals: number }
+  | { type: "accounting"; decimals: number }
+  | { type: "percentage" }
+  | { type: "scientific" };
+
+export type DateFormat = "iso" | "mm-dd-yyyy" | "mmm-dd-yyyy" | "mm-dd-yyyy-hh-mm";
+
+export type BooleanFormat = "checkbox" | "words";
+
+export type ColumnFormat =
+  | { kind: "number"; format: NumberFormat }
+  | { kind: "date"; format: DateFormat }
+  | { kind: "boolean"; format: BooleanFormat };
+
 export interface UseArqueroGridProps {
   data: ColumnTable;
   groupBy?: string[];
@@ -65,6 +82,9 @@ export interface UseArqueroGridProps {
   aggregates?: Record<string, string[]>;
   editable?: boolean | Record<string, boolean>;
   distinctValueThreshold?: number;
+  columnFormats?: Record<string, ColumnFormat>;
+  onColumnFormatsChange?: (formats: Record<string, ColumnFormat>) => void;
+  testCopyMode?: boolean;
   onCellChange?: (column: string, row: number, oldValue: string | number | boolean | Date | null, newValue: string | number | boolean | Date | null) => void;
   onDataChange?: (newTable: ColumnTable) => void;
 }

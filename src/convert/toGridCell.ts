@@ -11,6 +11,8 @@ import {
   type RowIDCell,
   GridCellKind,
 } from "@glideapps/glide-data-grid";
+import type { ColumnFormat } from "../types";
+import { formatValue } from "./formatValue";
 
 export type CellValue = string | number | boolean | Date | null | undefined;
 
@@ -23,7 +25,9 @@ function createBaseCell(): Pick<GridCell, "allowOverlay" | "lastUpdated"> {
 
 export function toGridCell(
   value: CellValue,
-  kind: "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid" = "text"
+  kind: "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid" = "text",
+  format?: ColumnFormat,
+  testCopyMode?: boolean
 ): GridCell {
   if (value === null || value === undefined) {
     return {
@@ -32,6 +36,55 @@ export function toGridCell(
       data: "",
       displayData: "",
     };
+  }
+
+  if (format) {
+    const formatted = formatValue(value, format);
+
+    if (format.kind === "boolean" && format.format === "checkbox") {
+      return {
+        ...createBaseCell(),
+        kind: GridCellKind.Boolean,
+        data: Boolean(value),
+        allowOverlay: false,
+      } as BooleanCell;
+    }
+
+    if (format.kind === "boolean" && format.format === "words" && formatted !== null) {
+      return {
+        ...createBaseCell(),
+        kind: GridCellKind.Text,
+        data: testCopyMode ? formatted : String(value),
+        displayData: formatted,
+      } as TextCell;
+    }
+
+    if (format.kind === "number" && formatted !== null && typeof value === "number") {
+      if (testCopyMode) {
+        return {
+          ...createBaseCell(),
+          kind: GridCellKind.Text,
+          data: formatted,
+          displayData: formatted,
+        } as TextCell;
+      }
+      return {
+        ...createBaseCell(),
+        kind: GridCellKind.Number,
+        data: value,
+        displayData: formatted,
+        copyData: String(value),
+      } as NumberCell;
+    }
+
+    if (format.kind === "date" && formatted !== null) {
+      return {
+        ...createBaseCell(),
+        kind: GridCellKind.Text,
+        data: formatted,
+        displayData: formatted,
+      } as TextCell;
+    }
   }
 
   switch (kind) {
@@ -51,12 +104,14 @@ export function toGridCell(
       } as UriCell;
 
     case "image":
-      const imgValue = Array.isArray(value) ? value : [String(value)];
-      return {
-        ...createBaseCell(),
-        kind: GridCellKind.Image,
-        data: imgValue,
-      } as ImageCell;
+      {
+        const imgValue = Array.isArray(value) ? value : [String(value)];
+        return {
+          ...createBaseCell(),
+          kind: GridCellKind.Image,
+          data: imgValue,
+        } as ImageCell;
+      }
 
     case "boolean":
       return {
@@ -74,24 +129,28 @@ export function toGridCell(
       } as MarkdownCell;
 
     case "bubble":
-      const bubbleValue = Array.isArray(value)
-        ? value.map(String)
-        : [String(value)];
-      return {
-        ...createBaseCell(),
-        kind: GridCellKind.Bubble,
-        data: bubbleValue,
-      } as BubbleCell;
+      {
+        const bubbleValue = Array.isArray(value)
+          ? value.map(String)
+          : [String(value)];
+        return {
+          ...createBaseCell(),
+          kind: GridCellKind.Bubble,
+          data: bubbleValue,
+        } as BubbleCell;
+      }
 
     case "drilldown":
-      const drillValue = Array.isArray(value)
-        ? value.map((v) => ({ text: String(v), id: String(v) }))
-        : [{ text: String(value), id: String(value) }];
-      return {
-        ...createBaseCell(),
-        kind: GridCellKind.Drilldown,
-        data: drillValue,
-      } as DrilldownCell;
+      {
+        const drillValue = Array.isArray(value)
+          ? value.map((v) => ({ text: String(v), id: String(v) }))
+          : [{ text: String(value), id: String(value) }];
+        return {
+          ...createBaseCell(),
+          kind: GridCellKind.Drilldown,
+          data: drillValue,
+        } as DrilldownCell;
+      }
 
     case "rowid":
       return {
