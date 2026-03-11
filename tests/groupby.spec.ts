@@ -29,7 +29,7 @@ test('boolean column count and distinct aggregates return numbers in groupBy mod
   const countColId = Object.keys(layout3.columns).find(k => k.includes('count'));
   expect(countColId).toBeDefined();
 
-  const countVals = await copyColumn(page, layout3.columns[countColId!], layout3.rows, context);
+  const { values: countVals } = await copyColumn(page, layout3.columns[countColId!], layout3.rows, context, layout3.containerBounds);
   expect(countVals.every(v => !isNaN(Number(v)) && v !== 'true' && v !== 'false'),
     `count aggregate returned non-numeric: ${countVals.join(',')}`).toBe(true);
   expect(countVals.every(v => Number(v) > 0)).toBe(true);
@@ -47,7 +47,7 @@ test('boolean column count and distinct aggregates return numbers in groupBy mod
   const distinctColId = Object.keys(layout4.columns).find(k => k.includes('distinct'));
   expect(distinctColId).toBeDefined();
 
-  const distinctVals = await copyColumn(page, layout4.columns[distinctColId!], layout4.rows, context);
+  const { values: distinctVals } = await copyColumn(page, layout4.columns[distinctColId!], layout4.rows, context, layout4.containerBounds);
   expect(distinctVals.every(v => !isNaN(Number(v)) && v !== 'true' && v !== 'false'),
     `distinct aggregate returned non-numeric: ${distinctVals.join(',')}`).toBe(true);
 

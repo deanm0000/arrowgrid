@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
-  getLayout, copyColumn, openFormatMenu, setupErrorTracking,
+  getLayout, copyColumn, openFormatMenu, closeMenu, setupErrorTracking,
   sampleRows, SAMPLE_DATA, WAIT_SHORT, WAIT_FORMAT,
 } from './helpers';
 
@@ -43,11 +43,12 @@ test('number currency format: copy returns raw values', async ({ page, context }
   await formatMenu.locator('select').first().selectOption('currency');
   await formatMenu.locator('select').nth(1).selectOption('2');
   await page.waitForTimeout(WAIT_FORMAT);
+  await closeMenu(page);
 
   const layout2 = await getLayout(page);
-  const values = await copyColumn(page, layout2.columns['value'], layout2.rows, context);
+  const { values, visibleRows } = await copyColumn(page, layout2.columns['value'], layout2.rows, context, layout2.containerBounds);
 
-  const expectedValues = sampleRows.map(r => String(r.value));
+  const expectedValues = sampleRows.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(r => String(r.value));
   expect(values).toEqual(expectedValues);
   expect(errors).toEqual([]);
 });
@@ -70,9 +71,10 @@ test('all number formats: copy returns raw values without corruption', async ({ 
       await formatMenu.locator('select').nth(1).selectOption('2');
     }
     await page.waitForTimeout(WAIT_FORMAT);
+    await closeMenu(page);
 
     const l = await getLayout(page);
-    const vals = await copyColumn(page, l.columns['value'], l.rows, context);
+    const { values: vals } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
 
     expect(vals.every(v => !v.includes('\u0000')), `format=${format} contains null bytes`).toBe(true);
 

@@ -23,6 +23,12 @@ export type ColumnLayout = {
 export type GridLayout = {
   columns: Record<string, ColumnLayout>;
   rows: { centerY: number }[];
+  containerBounds: { top: number; bottom: number };
+};
+
+export type CopyResult = {
+  values: string[];
+  visibleRows: number[];
 };
 
 export async function getLayout(page: Page): Promise<GridLayout> {
@@ -35,16 +41,24 @@ export async function getLayout(page: Page): Promise<GridLayout> {
   return JSON.parse(json);
 }
 
-export async function copyColumn(page: Page, col: ColumnLayout, rows: GridLayout['rows'], context: BrowserContext): Promise<string[]> {
+export async function copyColumn(page: Page, col: ColumnLayout, rows: GridLayout['rows'], context: BrowserContext, containerBounds?: GridLayout['containerBounds']): Promise<CopyResult> {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.mouse.click(col.centerX, rows[0].centerY);
-  await page.keyboard.down('Shift');
-  await page.mouse.click(col.centerX, rows[rows.length - 1].centerY);
-  await page.keyboard.up('Shift');
+  if (rows.length === 0) return { values: [], visibleRows: [] };
+  const bounds = containerBounds ?? { top: 0, bottom: 9999 };
+  const onScreenRows = rows
+    .map((r, i) => ({ i, ...r }))
+    .filter(r => r.centerY > bounds.top && r.centerY < bounds.bottom);
+  if (onScreenRows.length === 0) return { values: [], visibleRows: [] };
+  await page.mouse.click(col.centerX, onScreenRows[0].centerY);
+  if (onScreenRows.length > 1) {
+    await page.keyboard.down('Shift');
+    await page.mouse.click(col.centerX, onScreenRows[onScreenRows.length - 1].centerY);
+    await page.keyboard.up('Shift');
+  }
   await page.keyboard.press('Control+C');
   await page.waitForTimeout(WAIT_SHORT);
   const text = await page.evaluate(() => navigator.clipboard.readText());
-  return text.split('\n');
+  return { values: text.split('\n'), visibleRows: onScreenRows.map(r => r.i) };
 }
 
 export function parseValue(s: string): number | string {
@@ -72,17 +86,26 @@ export async function testSortForColumn(page: Page, col: ColumnLayout, colId: st
   await page.waitForTimeout(WAIT_FORMAT);
   const layout2 = await getLayout(page);
   const colKey = Object.keys(layout2.columns).find(k => Math.abs(layout2.columns[k].centerX - col.centerX) < 2)!;
-  const postAsc = await copyColumn(page, layout2.columns[colKey], layout2.rows, context);
+  const { values: postAsc } = await copyColumn(page, layout2.columns[colKey], layout2.rows, context, layout2.containerBounds);
   expect(isSortedAsc(postAsc)).toBe(true);
 
   await page.mouse.click(col.header.descX, col.header.descY);
   await page.waitForTimeout(WAIT_FORMAT);
   const layout3 = await getLayout(page);
-  const postDesc = await copyColumn(page, layout3.columns[colKey], layout3.rows, context);
+  const { values: postDesc } = await copyColumn(page, layout3.columns[colKey], layout3.rows, context, layout3.containerBounds);
   expect(isSortedDesc(postDesc)).toBe(true);
 
   await page.mouse.click(col.header.ascX, col.header.ascY);
   await page.waitForTimeout(WAIT_FORMAT);
+}
+
+export async function closeMenu(page: Page) {
+  const canvas = page.getByTestId('data-grid-canvas');
+  const box = await canvas.boundingBox();
+  if (box) {
+    await page.mouse.click(box.x + box.width - 5, box.y + box.height - 5);
+  }
+  await page.waitForTimeout(WAIT_SHORT);
 }
 
 export async function openFormatMenu(page: Page, col: ColumnLayout) {

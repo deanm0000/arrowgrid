@@ -1,9 +1,13 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type DrawCellCallback, type GridCell, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, type DataEditorRef, type TextCell, useTheme } from "@glideapps/glide-data-grid";
-import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type RowData, type FilterSpec, type ColumnFormat } from "../types";
-import { useArqueroGrid } from "./useArqueroGrid";
+import type { ColumnTable } from "arquero";
+import { op, from, escape } from "arquero";
+import { DataEditor, GridCellKind, useRowGrouping, type DrawHeaderCallback, type DrawCellCallback, type GridCell, type GridColumn, type HeaderClickedEventArgs, type Theme, type Item, type Rectangle, type RowGroup, type DataEditorRef, type EditableGridCell, type TextCell, useTheme } from "@glideapps/glide-data-grid";
+import { AGG_DELIMITER, type UseArqueroGridProps, type SortSpec, type CellChange, type RowData, type FilterSpec, type ColumnFormat } from "../types";
+import { toGridCell, getCellKind } from "../convert/toGridCell";
+import { applyEdits, applyFilters, applySort } from "../data/transforms";
 import { ColumnFilterMenu } from "./components/ColumnFilterMenu";
 import { ValueFormatMenu } from "./components/ValueFormatMenu";
+import type { TableExpr, TypedArray, Params } from "arquero/dist/types/table/types";
 
 
 const TRISIZE = 10;
@@ -24,6 +28,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     if (typeof bg === "string") return [bg, bg];
     return ["#e6e6e6", "#f5f5f5"];
   }, [props.backgroundColor]);
+  const roundingRadius = props.roundingRadius ?? 6;
   const [sortBy, setSortBy] = useState<SortSpec[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
   const [aggregates, setAggregates] = useState<Record<string, string[]>>({});
@@ -55,18 +60,376 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
     }
     return initial;
   });
+  const [filters, setFilters] = useState<FilterSpec[]>(props.filters ?? []);
+  const setFiltersForColumn = useCallback(
+    (column: string, newFilters: FilterSpec[]) => {
+      setFilters(prev => [
+        ...prev.filter(f => f.column !== column),
+        ...newFilters,
+      ]);
+    },
+    []
+  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const groupHeaderScrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<DataEditorRef>(null);
 
-  const grid = useArqueroGrid({
-    ...props,
-    sortBy,
-    groupBy,
-    aggregates,
-    columnFormats,
-    testCopyMode,
-  });
+  useEffect(() => {
+    setExpandedGroups(new Set());
+  }, [groupBy.join(",")]);
+
+  const editable = props.editable;
+  const onCellChange = props.onCellChange;
+  const onDataChange = props.onDataChange;
+
+  const [staged, setStaged] = useState<Map<string, Map<number, CellChange>>>(new Map());
+  const [undoStack, setUndoStack] = useState<CellChange[]>([]);
+  const [redoStack, setRedoStack] = useState<CellChange[]>([]);
+
+  const baseTable = useMemo(() => {
+    return props.data.derive({ __row_id: op.row_number() });
+  }, [props.data]);
+
+  useEffect(() => {
+    setStaged(new Map());
+    setUndoStack([]);
+    setRedoStack([]);
+  }, [props.data]);
+
+  const [view, columnNames] = useMemo(() => {
+    let v = applyEdits(baseTable, staged, baseTable.columnNames());
+    v = applyFilters(v, filters);
+    if (groupBy.length === 0) v = applySort(v, sortBy);
+    return [v, baseTable.columnNames().filter(n => n !== "__row_id")];
+  }, [baseTable, staged, filters, sortBy, groupBy.length]);
+
+  const finalView = useMemo(() => {
+    if (groupBy.length === 0) return view;
+
+    const VALID_AGGS = new Set(["sum", "avg", "min", "max", "count", "distinct", "mode"]);
+    const rollupSpec: Record<string, TableExpr> = {};
+    const aggregateColumnIds: string[] = [];
+    const nonGroupColumns = columnNames.filter(c => !groupBy.includes(c));
+
+    type WavgSpec = { col: string; weightCol: string; productId: string };
+    const needsWtdAvg: WavgSpec[] = [];
+
+    for (const col of nonGroupColumns) {
+      const arr = view.array(col) as TypedArray;
+      const isNumeric = arr.every((v) => typeof v === "number" || v == null);
+      const defaultFn = isNumeric ? "sum" : "distinct";
+      const rawFns = aggregates?.[col];
+      const fns = Array.isArray(rawFns) ? rawFns : rawFns ? [rawFns] : [defaultFn];
+
+      for (const fn of fns) {
+        if (fn.startsWith("wavg:")) {
+          const weightCol = fn.slice(5);
+          const productId = `${col}${AGG_DELIMITER}${weightCol}${AGG_DELIMITER}wtdprod`;
+          if (!aggregateColumnIds.includes(productId)) {
+            aggregateColumnIds.push(productId);
+            rollupSpec[productId] = op.sum(`${col}_x_${weightCol}`);
+          }
+          needsWtdAvg.push({ col, weightCol, productId });
+          continue;
+        }
+
+        if (!VALID_AGGS.has(fn)) continue;
+        const id = `${col}${AGG_DELIMITER}${fn}`;
+        if (aggregateColumnIds.includes(id)) continue;
+        aggregateColumnIds.push(id);
+
+        switch (fn) {
+          case "sum": rollupSpec[id] = op.sum(col); break;
+          case "avg": rollupSpec[id] = op.mean(col); break;
+          case "min": rollupSpec[id] = op.min(col); break;
+          case "max": rollupSpec[id] = op.max(col); break;
+          case "count": rollupSpec[id] = op.count(); break;
+          case "distinct": rollupSpec[id] = op.distinct(col); break;
+          case "mode": rollupSpec[id] = op.mode(col); break;
+        }
+      }
+    }
+
+    for (const { weightCol } of needsWtdAvg) {
+      const weightSumId = `${weightCol}${AGG_DELIMITER}sum`;
+      if (!aggregateColumnIds.includes(weightSumId)) {
+        aggregateColumnIds.push(weightSumId);
+        rollupSpec[weightSumId] = op.sum(weightCol);
+      }
+    }
+
+    let viewForGrouping = view;
+    if (needsWtdAvg.length > 0) {
+      const productDerives: Record<string, TableExpr> = {};
+      for (const { col, weightCol } of needsWtdAvg) {
+        const prodCol = `${col}_x_${weightCol}`;
+        productDerives[prodCol] = escape((d: RowData) => (d[col] as number) * (d[weightCol] as number));
+      }
+      viewForGrouping = view.derive(productDerives);
+    }
+
+    let grouped = viewForGrouping.groupby(...groupBy).rollup(rollupSpec);
+
+    if (needsWtdAvg.length > 0) {
+      const wavgDerives: Record<string, TableExpr> = {};
+      const intermediates = new Set<string>();
+      const userRequestedSums = new Set(
+        nonGroupColumns.flatMap(col =>
+          (aggregates?.[col] ?? []).filter((f: string) => f === "sum").map(() => `${col}${AGG_DELIMITER}sum`)
+        )
+      );
+
+      for (const { col, weightCol, productId } of needsWtdAvg) {
+        const wavgId = `${col}${AGG_DELIMITER}wavg${AGG_DELIMITER}${weightCol}`;
+        const weightSumId = `${weightCol}${AGG_DELIMITER}sum`;
+        wavgDerives[wavgId] = escape((d: RowData) => {
+          const prod = d[productId] as number;
+          const wsum = d[weightSumId] as number;
+          return wsum === 0 ? null : prod / wsum;
+        });
+        let insertAt = -1;
+        for (let i = 0; i < aggregateColumnIds.length; i++) {
+          if (aggregateColumnIds[i].split(AGG_DELIMITER)[0] === col) insertAt = i;
+        }
+        if (insertAt === -1) aggregateColumnIds.push(wavgId);
+        else aggregateColumnIds.splice(insertAt + 1, 0, wavgId);
+        intermediates.add(productId);
+        if (!userRequestedSums.has(weightSumId)) {
+          intermediates.add(weightSumId);
+        }
+      }
+      grouped = grouped.derive(wavgDerives);
+      const toKeep = aggregateColumnIds.filter(id => !intermediates.has(id));
+      aggregateColumnIds.splice(0, aggregateColumnIds.length, ...toKeep);
+    }
+
+    const finalColumns = [...groupBy, ...aggregateColumnIds];
+    grouped = grouped.select(...finalColumns);
+    grouped = applySort(grouped, sortBy);
+    return grouped;
+  }, [view, groupBy, columnNames, sortBy, aggregates]);
+
+  const gridColumns = useMemo(() =>
+    finalView.columnNames().filter((name) => name != "__row_id").map((name) => ({
+      id: name,
+      title: name.includes(AGG_DELIMITER)
+        ? (() => {
+            const parts = name.split(AGG_DELIMITER);
+            return parts[1] === "wavg" ? `wavg(${parts[2]})` : parts[1];
+          })()
+        : name,
+      width: 100,
+    })) as GridColumn[],
+  [finalView]);
+
+  const groupKeyFor = useCallback(
+    (row: RowData) => JSON.stringify(groupBy.map(col => row[col])),
+    [groupBy]
+  );
+
+  const { expandedView, rowGroups } = useMemo(() => {
+    if (groupBy.length === 0 || expandedGroups.size === 0) {
+      const groups: RowGroup[] = [];
+      for (let i = 0; i < finalView.numRows(); i++) {
+        groups.push({ headerIndex: i, isCollapsed: true });
+      }
+      return { expandedView: finalView, rowGroups: groupBy.length > 0 ? groups : [] };
+    }
+
+    const finalCols = finalView.columnNames();
+    const allRows: Record<string, unknown>[] = [];
+    const groups: RowGroup[] = [];
+
+    for (let i = 0; i < finalView.numRows(); i++) {
+      const summaryRow = finalView.object(i) as RowData;
+      const key = groupKeyFor(summaryRow);
+      const isExpanded = expandedGroups.has(key);
+      const headerIndex = allRows.length;
+      allRows.push(summaryRow);
+
+      if (isExpanded) {
+        const filtered = view.params({ gk: groupBy.map(col => summaryRow[col]) })
+          .filter(
+            escape((d: RowData, $: Params) =>
+              groupBy.every((col, idx) => d[col] === $.gk[idx])
+            )
+          );
+        for (let j = 0; j < filtered.numRows(); j++) {
+          const detailRow = filtered.object(j) as RowData;
+          const projected: Record<string, unknown> = {};
+          for (const col of finalCols) {
+            if (groupBy.includes(col)) {
+              projected[col] = detailRow[col];
+            } else {
+              const base = col.split(AGG_DELIMITER)[0];
+              projected[col] = detailRow[base] ?? null;
+            }
+          }
+          allRows.push(projected);
+        }
+        groups.push({ headerIndex, isCollapsed: false });
+      } else {
+        groups.push({ headerIndex, isCollapsed: true });
+      }
+    }
+
+    return { expandedView: from(allRows).select(finalCols), rowGroups: groups };
+  }, [finalView, expandedGroups, view, groupBy, groupKeyFor]);
+
+  const gridRows = useMemo(() => expandedView.numRows(), [expandedView]);
+
+  const toggleExpandGroup = useCallback(
+    (expandedViewRowIndex: number) => {
+      const row = expandedView.object(expandedViewRowIndex) as RowData;
+      if (!row) return;
+      const key = groupKeyFor(row);
+      setExpandedGroups(prev => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    },
+    [expandedView, groupKeyFor]
+  );
+
+  const columnKinds = useMemo(() => {
+    const kinds: Record<string, "text" | "number" | "uri" | "image" | "boolean" | "markdown" | "bubble" | "drilldown" | "rowid"> = {};
+    const sampleObj = baseTable.object(0) as RowData | undefined;
+    if (sampleObj) {
+      for (const colName of columnNames) {
+        const sampleValue = sampleObj[colName];
+        kinds[colName] = getCellKind(colName, sampleValue);
+      }
+    }
+    return kinds;
+  }, [baseTable]);
+
+  const gridGetCellContent = useCallback(
+    (cell: Item): GridCell => {
+      const [col, row] = cell;
+      const column = expandedView.columnNames()[col];
+      if (!column) return toGridCell(null);
+
+      const value = expandedView.get(column, row);
+      const baseCol = column.includes(AGG_DELIMITER) ? column.split(AGG_DELIMITER)[0] : column;
+      const aggFn = column.includes(AGG_DELIMITER) ? column.split(AGG_DELIMITER)[1] : null;
+      const NUMERIC_AGG_FNS = new Set(["sum", "avg", "mean", "count", "distinct", "min", "max"]);
+      const baseKind = columnKinds[baseCol] || columnKinds[column] || "text";
+
+      const isDetailRow = aggFn && value !== null && value !== undefined && typeof value !== "number";
+      const kind = isDetailRow ? baseKind : (aggFn && NUMERIC_AGG_FNS.has(aggFn) ? "number" : baseKind);
+      const fmt: ColumnFormat | undefined = isDetailRow
+        ? columnFormats[baseCol]
+        : columnFormats[column] ?? columnFormats[baseCol];
+
+      const returnCell = toGridCell(value, kind, fmt, testCopyMode);
+      return groupBy.length > 0 ? { ...returnCell, allowOverlay: false } : returnCell;
+    },
+    [expandedView, columnKinds, columnFormats, testCopyMode, groupBy.length]
+  );
+
+  const isColumnEditable = useCallback((columnId: string): boolean => {
+    if (groupBy.length > 0) return false;
+    if (editable === undefined || editable === false) return false;
+    if (typeof editable === "boolean") return editable;
+    if (typeof editable === "object") {
+      return editable[columnId] ?? false;
+    }
+    return false;
+  }, [groupBy, editable]);
+
+  const onCellEdited = useCallback(
+    (cell: Item, newCell: EditableGridCell): void => {
+      const [col, row] = cell;
+      const column = baseTable.columnNames()[col];
+      if (!column) return;
+      if (!isColumnEditable(column)) return;
+      if ("displayData" in newCell && newCell.displayData == String(newCell.data)) return;
+
+      const viewWRows = view.derive({ __disp_row: op.row_number() });
+      const filtTab = viewWRows.filter(escape((d: RowData) => d.__disp_row == row + 1));
+      const rowId = filtTab.get("__row_id", 0) as number;
+
+      const oldEdit = staged.get(column)?.get(rowId);
+      setStaged(prev => {
+        const newOuterMap = new Map(prev);
+        const existingInnerMap = newOuterMap.get(column) || new Map();
+        const newInnerMap = new Map(existingInnerMap);
+        newInnerMap.set(rowId, newCell.data);
+        newOuterMap.set(column, newInnerMap);
+        return newOuterMap;
+      });
+
+      setUndoStack(prev => [...prev, {
+        row: rowId,
+        col: column,
+        oldVal: (oldEdit == undefined) ? undefined : oldEdit.oldVal
+      }]);
+      setRedoStack([]);
+    },
+    [view, isColumnEditable, baseTable, staged]
+  );
+
+  const commit = useCallback(() => {
+    const committedWithId = applyEdits(baseTable, staged, baseTable.columnNames());
+    const cleanColumns = committedWithId.columnNames();
+    const committed = committedWithId.select(...cleanColumns) as ColumnTable;
+    onDataChange?.(committed);
+    setStaged(new Map());
+  }, [staged, baseTable, onDataChange]);
+
+  const rollback = useCallback(() => {
+    setStaged(new Map());
+    setUndoStack([]);
+    setRedoStack([]);
+  }, []);
+
+  const undo = useCallback(() => {
+    const latestUndo = undoStack.at(-1);
+    setUndoStack(prev => [...prev.slice(0, -1)]);
+    if (latestUndo != undefined) {
+      const thisRedoVal = staged.get(latestUndo.col)?.get(latestUndo.row)?.oldVal ?? undefined;
+      if (thisRedoVal != undefined) {
+        setRedoStack(prev => [...prev, { row: latestUndo.row, col: latestUndo.col, oldVal: thisRedoVal }]);
+      }
+    }
+    setStaged(prev => {
+      if (latestUndo == undefined) return prev;
+      const newOuterMap = new Map(prev);
+      const existingInnerMap = newOuterMap.get(latestUndo.col) || new Map();
+      const newInnerMap = new Map(existingInnerMap);
+      if (latestUndo.oldVal == undefined) newInnerMap.delete(latestUndo.row);
+      else newInnerMap.set(latestUndo.row, latestUndo.oldVal);
+      newOuterMap.set(latestUndo.col, newInnerMap);
+      return newOuterMap;
+    });
+  }, [undoStack, staged]);
+
+  const redo = useCallback(() => {
+    const latestRedo = redoStack.at(-1);
+    if (!latestRedo) return false;
+    setRedoStack(prev => [...prev.slice(0, -1)]);
+    setUndoStack(prev => {
+      if (prev.filter(x => x.col == latestRedo.col && x.row == latestRedo.row).length == 0) {
+        return [...prev, { ...latestRedo, oldVal: undefined }];
+      } else {
+        return [...prev, latestRedo];
+      }
+    });
+    setStaged(prev => {
+      if (latestRedo == undefined) return prev;
+      const newOuterMap = new Map(prev);
+      const existingInnerMap = newOuterMap.get(latestRedo.col) || new Map();
+      const newInnerMap = new Map(existingInnerMap);
+      if (latestRedo.oldVal == undefined) newInnerMap.delete(latestRedo.row);
+      else newInnerMap.set(latestRedo.row, latestRedo.oldVal);
+      newOuterMap.set(latestRedo.col, newInnerMap);
+      return newOuterMap;
+    });
+    return true;
+  }, [redoStack, staged]);
 
   const NUMERIC_AGGS = ["sum", "avg", "min", "max", "count", "distinct", "mode", "wavg"];
   const NON_NUMERIC_AGGS = ["count", "distinct", "mode"];
@@ -106,7 +469,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   const visibleDistinctValues = useMemo(() => {
     const map: Record<string, (string | number | boolean | null)[]> = {};
     for (const col of props.data.columnNames()) {
-      const otherFilters = grid.filters.filter(f => f.column !== col && f.op !== "in");
+      const otherFilters = filters.filter(f => f.column !== col && f.op !== "in");
       if (otherFilters.length === 0) {
         map[col] = allDistinctValues[col] ?? [];
         continue;
@@ -143,7 +506,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       map[col] = [...new Set(vals)].sort((a, b) => String(a ?? "").localeCompare(String(b ?? "")));
     }
     return map;
-  }, [props.data, grid.filters, allDistinctValues]);
+  }, [props.data, filters, allDistinctValues]);
 
   useEffect(() => {
     if (groupBy.length === 0) setAggregates({});
@@ -153,10 +516,10 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
 
   const defaultOrderedColumns = useMemo(() => {
     const groupedSet = new Set(groupBy);
-    const groupedCols = grid.columns.filter(c => c.id && groupedSet.has(c.id));
-    const otherCols = grid.columns.filter(c => !c.id || !groupedSet.has(c.id));
+    const groupedCols = gridColumns.filter(c => c.id && groupedSet.has(c.id));
+    const otherCols = gridColumns.filter(c => !c.id || !groupedSet.has(c.id));
     return [...groupedCols, ...otherCols];
-  }, [grid.columns, groupBy]);
+  }, [gridColumns, groupBy]);
 
   const defaultColumnKey = useMemo(
     () => defaultOrderedColumns.map(c => c.id).join(","),
@@ -174,9 +537,9 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   const orderedColumns = useMemo(() => {
     if (columnOrder.length === 0) return defaultOrderedColumns;
     return columnOrder
-      .map(id => grid.columns.find(c => c.id === id))
-      .filter((c): c is typeof grid.columns[0] => Boolean(c));
-  }, [columnOrder, grid.columns, defaultOrderedColumns]);
+      .map(id => gridColumns.find(c => c.id === id))
+      .filter((c): c is typeof gridColumns[0] => Boolean(c));
+  }, [columnOrder, gridColumns, defaultOrderedColumns]);
 
 
   useEffect(() => {
@@ -186,7 +549,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       if (!editor) return;
 
       const numCols = orderedColumns.length;
-      const numRows = grid.rows;
+      const numRows = gridRows;
 
       const columns: Record<string, {
         centerX: number;
@@ -218,21 +581,26 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         rows.push({ centerY: bounds.y + bounds.height / 2 });
       }
 
-      console.log('__ARROWGRID_LAYOUT__', JSON.stringify({ columns, rows }));
+      const cr = containerRef.current?.getBoundingClientRect();
+      console.log('__ARROWGRID_LAYOUT__', JSON.stringify({
+        columns,
+        rows,
+        containerBounds: cr ? { top: cr.top, bottom: cr.bottom } : { top: 0, bottom: 9999 },
+      }));
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [orderedColumns, grid.rows]);
+  }, [orderedColumns, gridRows]);
 
   // Map visual column index -> underlying column index
   const columnIndexMap = useMemo(() => {
     const map = new Map<string, number>();
-    grid.columns.forEach((c, i) => {
+    gridColumns.forEach((c, i) => {
       if (c.id) map.set(c.id, i);
     });
     return map;
-  }, [grid.columns]);
+  }, [gridColumns]);
 
   type HeaderButtonConfig = {
     offset: number;
@@ -257,7 +625,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   };
 
   const makeButtonCallbacks = (
-    orderedColumns: typeof grid.columns,
+    orderedColumns: typeof gridColumns,
     groupBy: string[],
     sortBy: SortSpec[],
     columnTypeMap: Record<string, "number" | "string" | "date" | "boolean" | "other">,
@@ -501,8 +869,8 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   );
 
   const headerRowSet = useMemo(
-    () => new Set(grid.rowGroups.map(g => g.headerIndex)),
-    [grid.rowGroups]
+    () => new Set(rowGroups.map(g => g.headerIndex)),
+    [rowGroups]
   );
 
   const aggColSpans = useMemo(() => {
@@ -526,15 +894,15 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   }, [orderedColumns, groupBy]);
 
   const rowGroupingOptions = useMemo(() => {
-    if (groupBy.length === 0 || grid.rowGroups.length === 0) return undefined;
+    if (groupBy.length === 0 || rowGroups.length === 0) return undefined;
     return {
-      groups: grid.rowGroups as RowGroup[],
+      groups: rowGroups as RowGroup[],
       height: 34,
       navigationBehavior: "skip" as const,
     };
-  }, [grid.rowGroups, groupBy]);
+  }, [rowGroups, groupBy]);
 
-  const { mapper } = useRowGrouping(rowGroupingOptions, grid.rows);
+  const { mapper } = useRowGrouping(rowGroupingOptions, gridRows);
 
   const expandToggleColIndex = useMemo(() => {
     if (groupBy.length === 0) return -1;
@@ -544,11 +912,11 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
 
   const collapsedRowSet = useMemo(() => {
     const set = new Set<number>();
-    for (const g of grid.rowGroups) {
+    for (const g of rowGroups) {
       if (g.isCollapsed) set.add(g.headerIndex);
     }
     return set;
-  }, [grid.rowGroups]);
+  }, [rowGroups]);
 
   const drawCell = useCallback<DrawCellCallback>(
     (args, drawContent) => {
@@ -657,11 +1025,11 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const [visualCol, row] = cell;
 
       const col = orderedColumns[visualCol];
-      if (!col?.id) return grid.getCellContent(cell as Item);
+      if (!col?.id) return gridGetCellContent(cell as Item);
 
       const underlyingIndex = columnIndexMap.get(col.id);
       if (underlyingIndex == null)
-        return grid.getCellContent(cell as Item);
+        return gridGetCellContent(cell as Item);
 
       const isDetailRow = groupBy.length > 0 && !headerRowSet.has(row);
 
@@ -674,16 +1042,16 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         if (spanInfo && spanInfo[0] === -1) {
           return { kind: GridCellKind.Text, data: "", displayData: "", allowOverlay: false } satisfies TextCell;
         }
-        const baseCell = grid.getCellContent([underlyingIndex, row] as Item);
+        const baseCell = gridGetCellContent([underlyingIndex, row] as Item);
         if (spanInfo) {
           return { ...baseCell, span: spanInfo, allowOverlay: false };
         }
         return { ...baseCell, allowOverlay: false };
       }
 
-      return grid.getCellContent([underlyingIndex, row] as Item);
+      return gridGetCellContent([underlyingIndex, row] as Item);
     },
-    [orderedColumns, columnIndexMap, grid, headerRowSet, groupBy, aggColSpans]
+    [orderedColumns, columnIndexMap, gridGetCellContent, headerRowSet, groupBy, aggColSpans]
   );
   const toggleGrouping = useCallback(
     (colName: string) => {
@@ -798,7 +1166,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
   }, [orderedColumns, groupBy, columnWidths]);
 
   return (
-    <div ref={containerRef} style={{ position: "relative" }}>
+    <div className="arrow-grid-container" ref={containerRef} style={{ position: "relative", height:'100%', width:'100%'  }} >
       {groupBy.length > 0 && (
         <div style={{ overflow: "hidden", height: 36 }}>
           <div
@@ -831,8 +1199,8 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       )}
       <DataEditor
         ref={editorRef}
-        {...grid}
-        theme={{ bgCell: bgColors[0], bgCellMedium: bgColors[1] }}
+        onCellEdited={onCellEdited}
+        theme={{ bgCell: bgColors[0], bgCellMedium: bgColors[1], roundingRadius }}
         getCellContent={getCellContent}
         columns={orderedColumns.map(col => {
           const isGrouped = col.id ? groupBy.includes(col.id) : false;
@@ -883,7 +1251,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         }}
         groupHeaderHeight={groupBy.length > 0 ? 0 : undefined}
         rowGrouping={rowGroupingOptions}
-        rows={grid.rows}
+        rows={gridRows}
         drawCell={drawCell}
         getCellsForSelection={true}
         drawHeader={drawHeader}
@@ -895,7 +1263,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
             const mapped = mapper(visualRow);
             if (mapped.isGroupHeader && visualCol === expandToggleColIndex) {
               if (event.localEventX >= event.bounds.width - 24) {
-                grid.toggleExpandGroup(mapped.originalIndex as number);
+                toggleExpandGroup(mapped.originalIndex as number);
               }
             }
           }
@@ -1179,7 +1547,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
               rawType === "number" ? "number" : rawType === "string" ? "string" : "other";
             const allVals = allDistinctValues[targetCol] ?? [];
             const visibleVals = visibleDistinctValues[targetCol] ?? [];
-            const colFilters = grid.filters.filter((f: FilterSpec) => f.column === targetCol);
+            const colFilters = filters.filter((f: FilterSpec) => f.column === targetCol);
 
             return (
               <div
@@ -1202,7 +1570,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
                   distinctValueThreshold={distinctValueThreshold}
                   filtersForColumn={colFilters}
                   onChangeFilters={newFilters => {
-                    grid.setFiltersForColumn(targetCol, newFilters);
+                    setFiltersForColumn(targetCol, newFilters);
                   }}
                 />
               </div>

@@ -42,7 +42,7 @@ function App() {
 
   return (
     <>
-      <div className="grid-container">
+      <div className="grid-container" style={{maxHeight:500, maxWidth:800}}>
         <ArqueroGrid
           data={data}
           groupBy={groupBy}

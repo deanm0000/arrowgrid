@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
-  getLayout, copyColumn, openFormatMenu, setupErrorTracking,
+  getLayout, copyColumn, openFormatMenu, closeMenu, setupErrorTracking,
   sampleRows, WAIT_FORMAT,
 } from './helpers';
 
@@ -69,10 +69,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['value']);
       await formatMenu.locator('select').first().selectOption('general');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['value'], l.rows, context);
-      expect(vals).toEqual(sampleValues.map(v => expectedGeneral(v)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleValues.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(v => expectedGeneral(v)));
       expect(errors).toEqual([]);
     });
 
@@ -87,10 +88,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       await formatMenu.locator('select').first().selectOption('decimal');
       await formatMenu.locator('select').nth(1).selectOption(DECIMALS);
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['value'], l.rows, context);
-      expect(vals).toEqual(sampleValues.map(v => expectedDecimal(v, 2)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleValues.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(v => expectedDecimal(v, 2)));
       expect(errors).toEqual([]);
     });
 
@@ -105,10 +107,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       await formatMenu.locator('select').first().selectOption('currency');
       await formatMenu.locator('select').nth(1).selectOption(DECIMALS);
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['value'], l.rows, context);
-      expect(vals).toEqual(sampleValues.map(v => expectedCurrency(v, 2)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleValues.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(v => expectedCurrency(v, 2)));
       expect(errors).toEqual([]);
     });
 
@@ -123,10 +126,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       await formatMenu.locator('select').first().selectOption('accounting');
       await formatMenu.locator('select').nth(1).selectOption(DECIMALS);
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['value'], l.rows, context);
-      expect(vals).toEqual(sampleValues.map(v => expectedAccounting(v, 2)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleValues.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(v => expectedAccounting(v, 2)));
       expect(errors).toEqual([]);
     });
 
@@ -140,10 +144,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['value']);
       await formatMenu.locator('select').first().selectOption('percentage');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['value'], l.rows, context);
-      expect(vals).toEqual(sampleValues.map(v => expectedPercentage(v)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleValues.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(v => expectedPercentage(v)));
       expect(errors).toEqual([]);
     });
 
@@ -157,10 +162,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['value']);
       await formatMenu.locator('select').first().selectOption('scientific');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['value'], l.rows, context);
-      expect(vals).toEqual(sampleValues.map(v => expectedScientific(v)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['value'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleValues.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(v => expectedScientific(v)));
       expect(errors).toEqual([]);
     });
   });
@@ -176,10 +182,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['date']);
       await formatMenu.locator('select').selectOption('iso');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['date'], l.rows, context);
-      expect(vals).toEqual(sampleDates.map(d => expectedIso(d)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['date'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleDates.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(d => expectedIso(d)));
       expect(errors).toEqual([]);
     });
 
@@ -193,10 +200,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['date']);
       await formatMenu.locator('select').selectOption('mm-dd-yyyy');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['date'], l.rows, context);
-      expect(vals).toEqual(sampleDates.map(d => expectedMmDdYyyy(d)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['date'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleDates.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(d => expectedMmDdYyyy(d)));
       expect(errors).toEqual([]);
     });
 
@@ -210,10 +218,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['date']);
       await formatMenu.locator('select').selectOption('mmm-dd-yyyy');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['date'], l.rows, context);
-      expect(vals).toEqual(sampleDates.map(d => expectedMmmDdYyyy(d)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['date'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleDates.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(d => expectedMmmDdYyyy(d)));
       expect(errors).toEqual([]);
     });
 
@@ -227,10 +236,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['date']);
       await formatMenu.locator('select').selectOption('mm-dd-yyyy-hh-mm');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['date'], l.rows, context);
-      expect(vals).toEqual(sampleDates.map(d => expectedMmDdYyyyHhMm(d)));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['date'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleDates.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(d => expectedMmDdYyyyHhMm(d)));
       expect(errors).toEqual([]);
     });
   });
@@ -246,10 +256,11 @@ test.describe('formatted copy with ?testcopy=1', () => {
       const formatMenu = await openFormatMenu(page, layout.columns['active']);
       await formatMenu.locator('select').selectOption('words');
       await page.waitForTimeout(WAIT_FORMAT);
+      await closeMenu(page);
 
       const l = await getLayout(page);
-      const vals = await copyColumn(page, l.columns['active'], l.rows, context);
-      expect(vals).toEqual(sampleBooleans.map(b => b ? 'true' : 'false'));
+      const { values: vals, visibleRows } = await copyColumn(page, l.columns['active'], l.rows, context, l.containerBounds);
+      expect(vals).toEqual(sampleBooleans.slice(visibleRows[0], visibleRows.at(-1)! + 1).map(b => b ? 'true' : 'false'));
       expect(errors).toEqual([]);
     });
   });

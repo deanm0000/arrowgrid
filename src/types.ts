@@ -1,5 +1,4 @@
-import type { ColumnTable, Table } from "arquero";
-import type { GridColumn, GridCell, EditableGridCell, RowGroup } from "@glideapps/glide-data-grid";
+import type { ColumnTable } from "arquero";
 
 export const AGG_DELIMITER = "ARROWGRIDDELIMITERYOUSHOULDNTSEETHIS";
 
@@ -88,28 +87,9 @@ export interface UseArqueroGridProps {
   onCellChange?: (column: string, row: number, oldValue: string | number | boolean | Date | null, newValue: string | number | boolean | Date | null) => void;
   onDataChange?: (newTable: ColumnTable) => void;
   backgroundColor?: string | [string, string];
-}
-
-export interface UseArqueroGridResult {
-  columns: GridColumn[];
-  getCellContent: (cell: readonly [number, number]) => GridCell;
-  onCellEdited: (cell: readonly [number, number], newCell: EditableGridCell) => void;
-  rows: number;
-  groups?: readonly (number | { readonly headerIndex: number; readonly isCollapsed: boolean; readonly subGroups?: readonly string[] })[];
-  filters: FilterSpec[];
-  setFilter: (filter: FilterSpec) => void;
-  setFiltersForColumn: (column: string, newFilters: FilterSpec[]) => void;
-  removeFilter: (index: number) => void;
-  clearFilters: () => void;
-  stagedCount: number;
-  commit: () => void;
-  rollback: () => void;
-  undo: () => void;
-  redo: () => boolean;
-  canUndo: boolean;
-  canRedo: boolean;
-  rowGroups: readonly RowGroup[];
-  toggleExpandGroup: (expandedViewRowIndex: number) => void;
+  roundingRadius?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface UseColumnFiltersProps {

@@ -25,12 +25,12 @@ test('filter value column to some value only shows rows with that value', async 
   await page.waitForTimeout(WAIT_SHORT);
 
   const valueToFilterFor = String(sampleRows[0].value);
-  await filterMenu.locator('span', { hasText: valueToFilterFor }).click();
+  await filterMenu.locator('span', { hasText: new RegExp(`^${valueToFilterFor}$`) }).click();
   await page.waitForTimeout(WAIT_MEDIUM);
 
   const layoutFiltered = await getLayout(page);
   const valueColFiltered = layoutFiltered.columns['value'];
-  const filteredValues = await copyColumn(page, valueColFiltered, layoutFiltered.rows, context);
+  const { values: filteredValues } = await copyColumn(page, valueColFiltered, layoutFiltered.rows, context, layoutFiltered.containerBounds);
   expect(filteredValues.every(v => v === valueToFilterFor)).toBe(true);
   expect(filteredValues.length).toBeGreaterThan(0);
 
@@ -44,7 +44,7 @@ test('filter value column to some value only shows rows with that value', async 
 
   // Uncheck the specific value (it's the only checked item)
   const filterMenu2 = page.locator('div[style*="position: absolute"]').last();
-  await filterMenu2.locator('span', { hasText: valueToFilterFor }).click();
+  await filterMenu2.locator('span', { hasText: new RegExp(`^${valueToFilterFor}$`) }).click();
   await page.waitForTimeout(WAIT_MEDIUM);
 
   const layoutEmpty = await getLayout(page);
