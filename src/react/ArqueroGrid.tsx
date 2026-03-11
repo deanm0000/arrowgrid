@@ -18,6 +18,12 @@ const HEADER_BUTTON_SPACING = 6;
 export function ArqueroGrid(props: UseArqueroGridProps) {
   const theme = useTheme();
   const testCopyMode = useMemo(() => new URLSearchParams(window.location.search).has("testcopy"), []);
+  const bgColors = useMemo<[string, string]>(() => {
+    const bg = props.backgroundColor;
+    if (Array.isArray(bg)) return bg;
+    if (typeof bg === "string") return [bg, bg];
+    return ["#e6e6e6", "#f5f5f5"];
+  }, [props.backgroundColor]);
   const [sortBy, setSortBy] = useState<SortSpec[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
   const [aggregates, setAggregates] = useState<Record<string, string[]>>({});
@@ -545,6 +551,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
 
   const drawCell = useCallback<DrawCellCallback>(
     (args, drawContent) => {
+      const rowBg = bgColors[args.row % 2];
       const isHeaderRow = groupBy.length > 0 && headerRowSet.has(args.row);
 
       if (!isHeaderRow) {
@@ -562,7 +569,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
           const { ctx, rect, theme } = args;
           const padding = 8;
           ctx.save();
-          ctx.fillStyle = theme.bgCell;
+          ctx.fillStyle = rowBg;
           ctx.fillRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
           if (args.highlighted) {
             ctx.fillStyle = theme.accentLight;
@@ -578,6 +585,11 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
           ctx.restore();
           return;
         }
+        const { ctx, rect } = args;
+        ctx.save();
+        ctx.fillStyle = rowBg;
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+        ctx.restore();
         drawContent();
         return;
       }
@@ -595,7 +607,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       const displayText = ("displayData" in cell ? cell.displayData : null) ?? ("data" in cell ? String(cell.data) : "") ?? "";
 
       ctx.save();
-      ctx.fillStyle = theme.bgCell;
+      ctx.fillStyle = rowBg;
       ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
       ctx.fillStyle = theme.textDark;
@@ -653,7 +665,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
 
       ctx.restore();
     },
-    [groupBy, expandToggleColIndex, headerRowSet, collapsedRowSet, orderedColumns, columnFormats]
+    [groupBy, expandToggleColIndex, headerRowSet, collapsedRowSet, orderedColumns, columnFormats, bgColors]
   );
 
   const getCellContent = useCallback(
@@ -836,6 +848,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
       <DataEditor
         ref={editorRef}
         {...grid}
+        theme={{ bgCell: bgColors[0], bgCellMedium: bgColors[1] }}
         getCellContent={getCellContent}
         columns={orderedColumns.map(col => {
           const isGrouped = col.id ? groupBy.includes(col.id) : false;

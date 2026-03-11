@@ -87,6 +87,7 @@ export interface UseArqueroGridProps {
   testCopyMode?: boolean;
   onCellChange?: (column: string, row: number, oldValue: string | number | boolean | Date | null, newValue: string | number | boolean | Date | null) => void;
   onDataChange?: (newTable: ColumnTable) => void;
+  backgroundColor?: string | [string, string];
 }
 
 export interface UseArqueroGridResult {
