@@ -50,7 +50,7 @@ function App() {
           editable={editable}
           onDataChange={onDataChange}
           onCellChange={onCellChange}
-          backgroundColor={["#03f83c", "#b1f8c1"]}
+          // backgroundColor={["#03f83c", "#b1f8c1"]}
         />
       </div>
     </>

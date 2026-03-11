@@ -552,83 +552,78 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
 
   const drawCell = useCallback<DrawCellCallback>(
     (args, drawContent) => {
+      const { ctx, rect, theme, highlighted } = args;
       const rowBg = bgColors[args.row % 2];
+
+      const fillBg = (inset = 0) => {
+        ctx.fillStyle = rowBg;
+        ctx.fillRect(rect.x + inset, rect.y + inset, rect.width - inset * 2, rect.height - inset * 2);
+        if (highlighted) {
+          ctx.fillStyle = theme.accentLight;
+          ctx.fillRect(rect.x + inset, rect.y + inset, rect.width - inset * 2, rect.height - inset * 2);
+        }
+      };
+
+      const drawBorders = () => {
+        const borderColor = theme.borderColor ?? "#e6e6e6";
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(rect.x + rect.width - 0.5, rect.y);
+        ctx.lineTo(rect.x + rect.width - 0.5, rect.y + rect.height);
+        ctx.moveTo(rect.x, rect.y + rect.height - 0.5);
+        ctx.lineTo(rect.x + rect.width, rect.y + rect.height - 0.5);
+        ctx.stroke();
+      };
+
+      const col = orderedColumns[args.col];
+      const colId = col?.id ?? null;
+      const baseColId = colId
+        ? (colId.includes(AGG_DELIMITER) ? colId.split(AGG_DELIMITER)[0] : colId)
+        : null;
+      const fmt = colId ? (columnFormats[colId] ?? (baseColId ? columnFormats[baseColId] : undefined)) : undefined;
+      const isAccounting = fmt?.kind === "number" && fmt.format.type === "accounting";
       const isHeaderRow = groupBy.length > 0 && headerRowSet.has(args.row);
 
-      if (!isHeaderRow) {
-        const col = orderedColumns[args.col];
-        const colId = col?.id ?? null;
-        const baseColId = colId
-          ? (colId.includes(AGG_DELIMITER) ? colId.split(AGG_DELIMITER)[0] : colId)
-          : null;
-        const fmt = colId ? (columnFormats[colId] ?? (baseColId ? columnFormats[baseColId] : undefined)) : undefined;
-        const isAccounting = fmt?.kind === "number" && fmt.format.type === "accounting";
-        if (isAccounting) {
-          drawContent();
-          const cellData = "displayData" in args.cell ? args.cell.displayData : ("data" in args.cell ? String(args.cell.data) : "");
-          const numStr = typeof cellData === "string" ? cellData : "";
-          const isNeg = numStr.startsWith("(");
-          const { ctx, rect, theme } = args;
-          const padding = 8;
-          ctx.save();
-          ctx.fillStyle = rowBg;
-          ctx.fillRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
-          if (args.highlighted) {
-            ctx.fillStyle = theme.accentLight;
-            ctx.fillRect(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2);
-          }
-          ctx.fillStyle = isNeg ? "#c00" : theme.textDark;
-          ctx.font = theme.baseFontStyle ?? "13px sans-serif";
-          ctx.textBaseline = "middle";
-          ctx.textAlign = "left";
-          ctx.fillText("$", rect.x + padding, rect.y + rect.height / 2);
-          ctx.textAlign = "right";
-          ctx.fillText(numStr, rect.x + rect.width - padding, rect.y + rect.height / 2);
-          ctx.restore();
-          return;
-        }
-        const { ctx, rect } = args;
+      if (isAccounting) {
+        const cellData = "displayData" in args.cell ? args.cell.displayData : ("data" in args.cell ? String(args.cell.data) : "");
+        const numStr = typeof cellData === "string" ? cellData : "";
+        const isNeg = numStr.startsWith("(");
+        const padding = 8;
         ctx.save();
-        ctx.fillStyle = rowBg;
-        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+        fillBg(isHeaderRow ? 0 : 1);
+        ctx.fillStyle = isNeg ? "#c00" : theme.textDark;
+        ctx.font = isHeaderRow ? `bold 13px ${theme.fontFamily}` : (theme.baseFontStyle ?? "13px sans-serif");
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.fillText("$", rect.x + padding, rect.y + rect.height / 2);
+        ctx.textAlign = "right";
+        ctx.fillText(numStr, rect.x + rect.width - padding, rect.y + rect.height / 2);
+        if (isHeaderRow) drawBorders();
+        ctx.restore();
+        return;
+      }
+
+      if (!isHeaderRow) {
+        ctx.save();
+        fillBg();
         ctx.restore();
         drawContent();
         return;
       }
 
-      const { ctx, rect, theme, cell } = args;
+      const { cell } = args;
+      const displayText = ("displayData" in cell ? cell.displayData : null) ?? ("data" in cell ? String(cell.data) : "") ?? "";
       const padding = 8;
 
-      const hCol = orderedColumns[args.col];
-      const hColId = hCol?.id ?? null;
-      const hBaseColId = hColId
-        ? (hColId.includes(AGG_DELIMITER) ? hColId.split(AGG_DELIMITER)[0] : hColId)
-        : null;
-      const hFmt = hColId ? (columnFormats[hColId] ?? (hBaseColId ? columnFormats[hBaseColId] : undefined)) : undefined;
-      const hIsAccounting = hFmt?.kind === "number" && hFmt.format.type === "accounting";
-
-      const displayText = ("displayData" in cell ? cell.displayData : null) ?? ("data" in cell ? String(cell.data) : "") ?? "";
-
       ctx.save();
-      ctx.fillStyle = rowBg;
-      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      fillBg();
 
       ctx.fillStyle = theme.textDark;
       ctx.font = `bold 13px ${theme.fontFamily}`;
       ctx.textBaseline = "middle";
-
-      if (hIsAccounting) {
-        const numStr = String(displayText);
-        const isNeg = numStr.startsWith("(");
-        ctx.fillStyle = isNeg ? "#c00" : theme.textDark;
-        ctx.textAlign = "left";
-        ctx.fillText("$", rect.x + padding, rect.y + rect.height / 2);
-        ctx.textAlign = "right";
-        ctx.fillText(numStr, rect.x + rect.width - padding, rect.y + rect.height / 2);
-      } else {
-        ctx.textAlign = "left";
-        ctx.fillText(String(displayText), rect.x + padding, rect.y + rect.height / 2);
-      }
+      ctx.textAlign = "left";
+      ctx.fillText(String(displayText), rect.x + padding, rect.y + rect.height / 2);
 
       if (args.col === expandToggleColIndex) {
         const isCollapsed = collapsedRowSet.has(args.row);
@@ -651,21 +646,7 @@ export function ArqueroGrid(props: UseArqueroGridProps) {
         ctx.fill();
       }
 
-      if (args.highlighted) {
-        ctx.fillStyle = theme.accentLight;
-        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-      }
-
-      const borderColor = theme.borderColor ?? "#e6e6e6";
-      ctx.strokeStyle = borderColor;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(rect.x + rect.width - 0.5, rect.y);
-      ctx.lineTo(rect.x + rect.width - 0.5, rect.y + rect.height);
-      ctx.moveTo(rect.x, rect.y + rect.height - 0.5);
-      ctx.lineTo(rect.x + rect.width, rect.y + rect.height - 0.5);
-      ctx.stroke();
-
+      drawBorders();
       ctx.restore();
     },
     [groupBy, expandToggleColIndex, headerRowSet, collapsedRowSet, orderedColumns, columnFormats, bgColors]
